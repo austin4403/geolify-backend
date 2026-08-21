@@ -12,7 +12,7 @@ const createLocationSchema = z.object({
   category: z.string().default("general"),
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
-  metadata: z.record(z.any()).optional(),
+  metadata: z.record(z.string(), z.any()).optional(),
 });
 
 // GET all locations
@@ -39,7 +39,7 @@ router.post("/", async (req: Request, res: Response) => {
     res.status(201).json({ data: newLocation });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
-      res.status(400).json({ error: error.errors });
+      res.status(400).json({ error: error.issues });
       return;
     }
     res.status(500).json({ error: error.message });
@@ -49,7 +49,8 @@ router.post("/", async (req: Request, res: Response) => {
 // GET location by ID
 router.get("/:id", async (req: Request, res: Response) => {
   try {
-    const id = parseInt(req.params.id, 10);
+    const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const id = parseInt(rawId, 10);
     if (isNaN(id)) {
       res.status(400).json({ error: "Invalid location ID" });
       return;

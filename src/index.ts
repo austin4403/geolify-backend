@@ -2,6 +2,15 @@ import express from "express";
 import cors from "cors";
 import * as dotenv from "dotenv";
 import healthRouter from "./routes/health";
+import profilesRouter from "./routes/profiles";
+import projectsRouter from "./routes/projects";
+import stationsRouter from "./routes/stations";
+import rocksRouter from "./routes/rocks";
+import structuresRouter from "./routes/structures";
+import hydrogeologyRouter from "./routes/hydrogeology";
+import uploadsRouter from "./routes/uploads";
+import eventsRouter from "./routes/events";
+import reportsRouter from "./routes/reports";
 import locationsRouter from "./routes/locations";
 
 dotenv.config({ path: ".env.local" });
@@ -20,17 +29,34 @@ app.use(express.json());
 
 // API Routes
 app.use("/api/health", healthRouter);
+app.use("/api/profiles", profilesRouter);
+app.use("/api/projects", projectsRouter);
+app.use("/api/stations", stationsRouter);
+app.use("/api", rocksRouter);
+app.use("/api", structuresRouter);
+app.use("/api", hydrogeologyRouter);
+app.use("/api/uploads", uploadsRouter);
+app.use("/api", eventsRouter);
+app.use("/api", reportsRouter);
 app.use("/api/locations", locationsRouter);
 
 // Root route
 app.get("/", (_req, res) => {
   res.json({
     name: "Geolify Backend API",
-    version: "1.0.0",
+    version: "2.0.0",
     status: "online",
-    endpoints: {
+    modules: {
       health: "/api/health",
-      locations: "/api/locations",
+      profiles: "/api/profiles",
+      projects: "/api/projects",
+      stations: "/api/stations",
+      rocks: "/api/stations/:stationId/rocks",
+      structures: "/api/stations/:stationId/structures",
+      hydrogeology: "/api/boreholes",
+      uploads: "/api/uploads/presigned-url",
+      events: "/api/projects/:projectId/events",
+      reports: "/api/projects/:projectId/export/summary",
     },
   });
 });
