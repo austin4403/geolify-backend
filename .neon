@@ -1,0 +1,10 @@
+{
+  "orgId": "org-tiny-haze-10782819",
+  "projectId": "late-shadow-82511312",
+  "_init": {
+    "features": [
+      "database",
+      "auth"
+    ]
+  }
+}
