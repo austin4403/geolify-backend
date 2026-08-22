@@ -1,14 +1,15 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db";
-import { projects, projectCollaborators, userProfiles, stations, boreholes } from "../db/schema";
+import { projects, projectCollaborators } from "../db/schema";
 import { z } from "zod";
-import { eq, desc, or, ilike } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
+import { requireAuth, requireProjectRole } from "../middleware/auth";
 
 const router = Router();
 
 const createProjectSchema = z.object({
   userId: z.string().min(1, "User ID is required"),
-  name: z.string().min(1, "Project name is required"),
+  name: z.string().min(1, "Project name is required").max(200, "Project name too long"),
   projectType: z.enum([
     "field_mapping",
     "hydrogeology",
@@ -16,17 +17,17 @@ const createProjectSchema = z.object({
     "mining",
     "geotechnical",
   ]),
-  description: z.string().optional(),
-  clientOrOrg: z.string().optional(),
+  description: z.string().max(2000).optional(),
+  clientOrOrg: z.string().max(200).optional(),
   status: z.enum(["planning", "in_progress", "completed", "archived"]).default("in_progress"),
   budgetEstimated: z.number().nonnegative().optional(),
-  budgetCurrency: z.string().default("KES"),
+  budgetCurrency: z.string().max(10).default("KES"),
   bounds: z
     .object({
-      minLat: z.number().optional(),
-      maxLat: z.number().optional(),
-      minLng: z.number().optional(),
-      maxLng: z.number().optional(),
+      minLat: z.number().min(-90).max(90).optional(),
+      maxLat: z.number().min(-90).max(90).optional(),
+      minLng: z.number().min(-180).max(180).optional(),
+      maxLng: z.number().min(-180).max(180).optional(),
       polygonGeoJson: z.record(z.string(), z.any()).optional(),
     })
     .optional(),
@@ -40,12 +41,12 @@ const inviteCollaboratorSchema = z.object({
   role: z.enum(["owner", "editor", "viewer"]).default("editor"),
 });
 
-// 1. GET /api/projects - List projects (with search and domain filter)
+// 1. GET /api/projects - List projects accessible to current user (or filtered by user)
 router.get("/", async (req: Request, res: Response) => {
   try {
     const searchQuery = req.query.q as string | undefined;
     const typeFilter = req.query.type as string | undefined;
-    const userId = req.query.userId as string | undefined;
+    const currentUserId = (req.query.userId as string) || req.user?.userId || (req.headers["x-user-id"] as string);
 
     let allProjects = await db.query.projects.findMany({
       orderBy: desc(projects.createdAt),
@@ -58,9 +59,9 @@ router.get("/", async (req: Request, res: Response) => {
       allProjects = allProjects.filter((p) => p.projectType === typeFilter);
     }
 
-    if (userId) {
+    if (currentUserId) {
       allProjects = allProjects.filter(
-        (p) => p.userId === userId || p.collaborators.some((c) => c.userId === userId)
+        (p) => p.userId === currentUserId || p.collaborators.some((c) => c.userId === currentUserId)
       );
     }
 
@@ -80,8 +81,8 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-// 2. GET /api/projects/:id - Get project with all child stations, boreholes, and collaborators
-router.get("/:id", async (req: Request, res: Response) => {
+// 2. GET /api/projects/:id - Get project details (enforces viewer RBAC)
+router.get("/:id", requireProjectRole("viewer"), async (req: Request, res: Response) => {
   try {
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const id = parseInt(rawId, 10);
@@ -116,8 +117,8 @@ router.get("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// 3. POST /api/projects - Create a new project
-router.post("/", async (req: Request, res: Response) => {
+// 3. POST /api/projects - Create a new project (requires authentication)
+router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const validatedData = createProjectSchema.parse(req.body);
 
@@ -143,8 +144,8 @@ router.post("/", async (req: Request, res: Response) => {
   }
 });
 
-// 4. PATCH /api/projects/:id - Update a project
-router.patch("/:id", async (req: Request, res: Response) => {
+// 4. PATCH /api/projects/:id - Update a project (requires editor or owner role)
+router.patch("/:id", requireProjectRole("editor"), async (req: Request, res: Response) => {
   try {
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const id = parseInt(rawId, 10);
@@ -180,8 +181,8 @@ router.patch("/:id", async (req: Request, res: Response) => {
   }
 });
 
-// 5. POST /api/projects/:id/collaborators - Invite/Share project with a user
-router.post("/:id/collaborators", async (req: Request, res: Response) => {
+// 5. POST /api/projects/:id/collaborators - Invite/Share project (requires owner role)
+router.post("/:id/collaborators", requireProjectRole("owner"), async (req: Request, res: Response) => {
   try {
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const id = parseInt(rawId, 10);
@@ -192,6 +193,29 @@ router.post("/:id/collaborators", async (req: Request, res: Response) => {
     }
 
     const validated = inviteCollaboratorSchema.parse(req.body);
+
+    // Check if already invited
+    const existing = await db
+      .select({ id: projectCollaborators.id })
+      .from(projectCollaborators)
+      .where(
+        and(
+          eq(projectCollaborators.projectId, id),
+          eq(projectCollaborators.userId, validated.userId)
+        )
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      // Update role
+      const [updated] = await db
+        .update(projectCollaborators)
+        .set({ role: validated.role })
+        .where(eq(projectCollaborators.id, existing[0].id))
+        .returning();
+      res.json({ data: updated, message: "Collaborator role updated" });
+      return;
+    }
 
     const [collaborator] = await db
       .insert(projectCollaborators)
@@ -212,8 +236,8 @@ router.post("/:id/collaborators", async (req: Request, res: Response) => {
   }
 });
 
-// 6. DELETE /api/projects/:id - Delete project (cascades to all stations, boreholes, etc.)
-router.delete("/:id", async (req: Request, res: Response) => {
+// 6. DELETE /api/projects/:id - Delete project (requires owner role)
+router.delete("/:id", requireProjectRole("owner"), async (req: Request, res: Response) => {
   try {
     const rawId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const id = parseInt(rawId, 10);

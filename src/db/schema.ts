@@ -1,10 +1,10 @@
-import { pgTable, text, serial, timestamp, doublePrecision, jsonb, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, timestamp, doublePrecision, jsonb, integer, boolean, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
 
-// 0. User Profiles & Onboarding (Linked to Neon Auth)
+// 0. User Profiles & Onboarding (Linked to Neon Auth / OIDC)
 export const userProfiles = pgTable("user_profiles", {
   id: serial("id").primaryKey(),
-  userId: text("user_id").notNull().unique(),            // Unique ID from Neon Auth / Better Auth
+  userId: text("user_id").notNull().unique(),            // Unique ID from Neon Auth / OIDC
   fullName: text("full_name").notNull(),
   username: text("username").notNull().unique(),
   profession: text("profession"),                        // "Exploration Geologist", "Hydrogeologist", "GIS Specialist", etc.
@@ -12,7 +12,7 @@ export const userProfiles = pgTable("user_profiles", {
   country: text("country").notNull().default("KE"),      // ISO country code (e.g. "KE", "US", "CA")
   preferredCurrency: text("preferred_currency").notNull().default("KES"), // "KES", "USD", "EUR", "GBP"
   unitSystem: text("unit_system").notNull().default("metric"),           // "metric" (m, km) vs "imperial" (ft, mi)
-  avatarUrl: text("avatar_url"),                         // Cloudflare R2 profile photo URL
+  avatarUrl: text("avatar_url"),                         // Cloudflare R2 / S3 profile photo URL
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -35,14 +35,14 @@ export const projects = pgTable("projects", {
     maxLat?: number;
     minLng?: number;
     maxLng?: number;
-    polygonGeoJson?: Record<string, any>;
-  }>(),
+  }>().default({}),
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// 2. Project Collaborators & Role-Based Access
+// 2. Project Collaborators (Multi-User RBAC)
 export const projectCollaborators = pgTable("project_collaborators", {
   id: serial("id").primaryKey(),
   projectId: integer("project_id")
@@ -56,6 +56,7 @@ export const projectCollaborators = pgTable("project_collaborators", {
 // 3. Stations (Field Observation Points)
 export const stations = pgTable("stations", {
   id: serial("id").primaryKey(),
+  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID for conflict-free sync
   projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
   code: text("code").notNull(),                          // e.g. "ST-04"
   name: text("name").notNull(),                          // e.g. "River Kanyoko Outcrop"
@@ -70,6 +71,7 @@ export const stations = pgTable("stations", {
   weathering: text("weathering").default("moderate"),    // "fresh", "slight", "moderate", "high"
   photoUrls: jsonb("photo_urls").$type<string[]>().default([]), // Optional station/outcrop landscape photos
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -77,6 +79,7 @@ export const stations = pgTable("stations", {
 // 4. Rock Samples (Multiple samples per station with mandatory photos)
 export const rockSamples = pgTable("rock_samples", {
   id: serial("id").primaryKey(),
+  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID
   stationId: integer("station_id")
     .notNull()
     .references(() => stations.id, { onDelete: "cascade" }),
@@ -110,8 +113,9 @@ export const rockSamples = pgTable("rock_samples", {
     magnetism?: boolean;
     probableMineral?: string;                            // e.g. "Quartz", "K-Feldspar"
   }>>().default([]),
-  photoUrls: jsonb("photo_urls").$type<string[]>().notNull(), // MANDATORY: Every rock sample must have photo(s) (Cloudflare R2)
+  photoUrls: jsonb("photo_urls").$type<string[]>().notNull(), // MANDATORY: Every rock sample must have photo(s)
   notes: text("notes"),
+  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -119,6 +123,7 @@ export const rockSamples = pgTable("rock_samples", {
 // 5. Structural Measurements (3D Foliation, Dip, Strike, Folds)
 export const structuralMeasurements = pgTable("structural_measurements", {
   id: serial("id").primaryKey(),
+  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID
   stationId: integer("station_id")
     .notNull()
     .references(() => stations.id, { onDelete: "cascade" }),
@@ -130,12 +135,15 @@ export const structuralMeasurements = pgTable("structural_measurements", {
   plunge: doublePrecision("plunge"),                     // For lineations / fold axes (0° - 90°)
   trend: doublePrecision("trend"),                       // Trend azimuth (0° - 359.99°)
   notes: text("notes"),
+  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
   createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // 6. Boreholes & Hydrogeological Surveys (Boreholes, Aquifers, Water Tables, VES)
 export const boreholes = pgTable("boreholes", {
   id: serial("id").primaryKey(),
+  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID
   projectId: integer("project_id").references(() => projects.id, { onDelete: "cascade" }),
   boreholeNumber: text("borehole_number").notNull(),      // e.g. "BH-001" or "WRMA/BH/2026/04"
   name: text("name").notNull(),                           // e.g. "Masinga Community Water Project"
@@ -181,6 +189,7 @@ export const boreholes = pgTable("boreholes", {
   }>>().default([]),
   photoUrls: jsonb("photo_urls").$type<string[]>().default([]),
   notes: text("notes"),
+  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -210,6 +219,21 @@ export const liveLocations = pgTable("live_locations", {
   longitude: doublePrecision("longitude").notNull(),
   elevation: doublePrecision("elevation"),
   batteryLevel: doublePrecision("battery_level"),         // 0 to 100%
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// 9. Saved / Reference Locations (Points of Interest, Outcrops, Base Camps)
+export const locations = pgTable("locations", {
+  id: serial("id").primaryKey(),
+  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID
+  name: text("name").notNull(),
+  description: text("description"),
+  category: text("category").notNull().default("general"),
+  latitude: doublePrecision("latitude").notNull(),
+  longitude: doublePrecision("longitude").notNull(),
+  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
+  createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 

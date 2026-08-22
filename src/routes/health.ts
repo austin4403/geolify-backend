@@ -9,6 +9,7 @@ router.get("/", async (_req: Request, res: Response) => {
     
     res.json({
       status: "healthy",
+      environment: process.env.NODE_ENV || "development",
       timestamp: new Date().toISOString(),
       database: {
         connected: true,

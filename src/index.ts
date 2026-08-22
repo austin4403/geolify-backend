@@ -1,5 +1,4 @@
 import express from "express";
-import cors from "cors";
 import * as dotenv from "dotenv";
 import healthRouter from "./routes/health";
 import profilesRouter from "./routes/profiles";
@@ -12,20 +11,54 @@ import uploadsRouter from "./routes/uploads";
 import eventsRouter from "./routes/events";
 import reportsRouter from "./routes/reports";
 import locationsRouter from "./routes/locations";
+import syncRouter from "./routes/sync";
+import swaggerRouter from "./docs/swagger";
+import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
+import { authenticateUser } from "./middleware/auth";
+import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
 
 dotenv.config({ path: ".env.local" });
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Middlewares
-app.use(
-  cors({
-    origin: ["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
-    credentials: true,
-  })
-);
-app.use(express.json());
+// Security Middlewares
+app.use(securityHeaders);
+app.use(corsMiddleware);
+app.use(apiLimiter);
+app.use(express.json({ limit: "2mb" })); // Prevent large payload memory exhaustion DoS
+app.use(express.urlencoded({ extended: true, limit: "2mb" }));
+
+// Universal Authentication Context
+app.use(authenticateUser);
+
+// Interactive Swagger UI & OpenAPI Specification
+app.use("/api/docs", swaggerRouter);
+
+// Root route
+app.get("/", (_req, res) => {
+  res.json({
+    name: "Geolify Backend API",
+    version: "2.0.0",
+    status: "online",
+    documentation: "/api/docs",
+    modules: {
+      health: "/api/health",
+      docs: "/api/docs",
+      profiles: "/api/profiles",
+      projects: "/api/projects",
+      stations: "/api/stations",
+      rocks: "/api/stations/:stationId/rocks",
+      structures: "/api/stations/:stationId/structures",
+      hydrogeology: "/api/boreholes",
+      sync: "/api/projects/:projectId/sync/pull",
+      uploads: "/api/uploads/presigned-url",
+      events: "/api/projects/:projectId/events",
+      reports: "/api/projects/:projectId/export/summary",
+      locations: "/api/locations",
+    },
+  });
+});
 
 // API Routes
 app.use("/api/health", healthRouter);
@@ -39,32 +72,21 @@ app.use("/api/uploads", uploadsRouter);
 app.use("/api", eventsRouter);
 app.use("/api", reportsRouter);
 app.use("/api/locations", locationsRouter);
+app.use("/api", syncRouter);
 
-// Root route
-app.get("/", (_req, res) => {
-  res.json({
-    name: "Geolify Backend API",
-    version: "2.0.0",
-    status: "online",
-    modules: {
-      health: "/api/health",
-      profiles: "/api/profiles",
-      projects: "/api/projects",
-      stations: "/api/stations",
-      rocks: "/api/stations/:stationId/rocks",
-      structures: "/api/stations/:stationId/structures",
-      hydrogeology: "/api/boreholes",
-      uploads: "/api/uploads/presigned-url",
-      events: "/api/projects/:projectId/events",
-      reports: "/api/projects/:projectId/export/summary",
-    },
+// 404 Catch-All Handler
+app.use(notFoundHandler);
+
+// Centralized Global Error Handler
+app.use(errorHandler);
+
+// Start server only when not running in test mode
+if (process.env.NODE_ENV !== "test") {
+  app.listen(PORT, () => {
+    console.log(`🚀 Geolify server running on http://localhost:${PORT}`);
+    console.log(`🩺 Health check available at http://localhost:${PORT}/api/health`);
+    console.log(`📑 Swagger Documentation available at http://localhost:${PORT}/api/docs`);
   });
-});
-
-// Start server
-app.listen(PORT, () => {
-  console.log(`🚀 Geolify server running on http://localhost:${PORT}`);
-  console.log(`🩺 Health check available at http://localhost:${PORT}/api/health`);
-});
+}
 
 export default app;

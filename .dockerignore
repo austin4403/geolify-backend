@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+.env*
+!.env.example
+tests
+coverage
+*.log
+.DS_Store
+.agents
+.gemini
