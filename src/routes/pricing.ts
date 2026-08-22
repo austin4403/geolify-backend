@@ -54,7 +54,7 @@ export const PRICING_PLANS: Record<string, PlanDefinition> = {
   },
   pro: {
     id: "pro",
-    name: "Professional Geologist",
+    name: "Professional",
     description: "For exploration geologists, hydrogeology consultants, and drilling survey teams.",
     monthlyPrice: { USD: 25, KES: 3200 },
     annualPrice: { USD: 240, KES: 30000 },
@@ -77,7 +77,7 @@ export const PRICING_PLANS: Record<string, PlanDefinition> = {
   },
   premium: {
     id: "premium",
-    name: "Mining & Enterprise Team",
+    name: "Enterprise",
     description: "For mining exploration corporations, government ministries, and drilling contractors.",
     monthlyPrice: { USD: 80, KES: 10000 },
     annualPrice: { USD: 780, KES: 96000 },
