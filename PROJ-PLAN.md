@@ -190,3 +190,24 @@ erDiagram
 - [ ] **Phase 7: Final Neon Auth UI & Protected Route Integration**
   - [ ] Connect Better Auth / Neon Auth session verification middleware
 
+
+
+---
+
+## 🚨 Pre-Launch Clean-up & Production Checklist (REMOVE BEFORE PUBLIC LAUNCH)
+
+> [!WARNING]
+> The following temporary dev/demo utilities and configurations **must be audited or removed** prior to production deployment:
+
+### 1. 🔑 Frontend Auth & Testing Artifacts
+* **Remove Quick-Switch Demo Buttons**: Delete the demo persona selector grid in `geolify-web/app/login/page.tsx`.
+* **Disable Mock Profiles in AuthContext**: Remove the fallback demo profile objects in `geolify-web/context/AuthContext.tsx`.
+* **Lead Dev Database Roles**: Transition from email string checks (`odhiambo4403@gmail.com`) to DB `role = lead_dev` in `src/middleware/admin.ts`.
+
+### 2. 🌐 CORS & Security Hardening
+* **Lock Allowed Origins**: In production (`NODE_ENV=production`), restrict CORS strictly to `https://geoquerry.app` and `https://app.geoquerry.com`.
+* **JWT Secret & JWKS Verification**: Enforce symmetric secret or Neon Auth remote JWKS token signature verification.
+
+### 3. 💳 Payment Gateway Keys
+* **Stripe Live Keys**: Replace `sk_test_...` with production Stripe API keys & webhook secret.
+* **M-Pesa Production URLs**: Switch Safaricom Daraja API endpoints from sandbox to live production URLs with real Paybill / Till credentials.
