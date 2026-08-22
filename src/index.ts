@@ -12,6 +12,7 @@ import eventsRouter from "./routes/events";
 import reportsRouter from "./routes/reports";
 import locationsRouter from "./routes/locations";
 import syncRouter from "./routes/sync";
+import authRouter from "./routes/auth";
 import adminRouter from "./routes/admin";
 import pricingRouter from "./routes/pricing";
 import checkoutRouter from "./routes/checkout";
@@ -71,6 +72,7 @@ app.get("/", (_req, res) => {
 
 // API Routes
 app.use("/api/health", healthRouter);
+app.use("/api/auth", authRouter);
 app.use("/api/pricing", pricingRouter);
 app.use("/api/checkout", checkoutRouter);
 app.use("/api/webhooks", webhooksRouter);

@@ -5,6 +5,9 @@ import { relations } from "drizzle-orm";
 export const userProfiles = pgTable("user_profiles", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull().unique(),            // Unique ID from Neon Auth / OIDC
+  email: text("email").unique(),                         // User email address
+  passwordHash: text("password_hash"),                   // Secure bcrypt hash for native password auth
+  role: text("role").notNull().default("user"),          // "user", "lead_dev", "admin"
   fullName: text("full_name").notNull(),
   username: text("username").notNull().unique(),
   profession: text("profession"),                        // "Exploration Geologist", "Hydrogeologist", "GIS Specialist", etc.
