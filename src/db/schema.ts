@@ -17,6 +17,11 @@ export const userProfiles = pgTable("user_profiles", {
   benefitTier: text("benefit_tier").notNull().default("standard"), // "core_dev", "student", "beta_developer", "standard"
   discountPercent: doublePrecision("discount_percent").notNull().default(0), // 100, 70, 40, 0
   discountExpiresAt: timestamp("discount_expires_at"),   // null = lifetime (e.g. core_dev)
+  subscriptionTier: text("subscription_tier").notNull().default("free"), // "free", "pro", "premium", "enterprise"
+  subscriptionStatus: text("subscription_status").notNull().default("active"), // "active", "canceled", "past_due", "trialing"
+  subscriptionExpiresAt: timestamp("subscription_expires_at"), // null for active free/lifetime
+  paymentProvider: text("payment_provider"),             // "stripe", "mpesa", "paystack", "manual", null
+  paymentCustomerId: text("payment_customer_id"),       // Stripe customer ID or M-Pesa phone/account
   studentVerificationStatus: text("student_verification_status").default("none"), // "none", "pending", "approved", "rejected"
   studentIdCardUrl: text("student_id_card_url"),
   institutionName: text("institution_name"),

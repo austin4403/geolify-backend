@@ -25,6 +25,27 @@ describe("GeoQuerry API Integration Tests", () => {
     expect(res.body.paths).toHaveProperty("/api/projects/{projectId}/sync/push");
   });
 
+  it("GET /api/pricing/plans - returns subscription tiers, pricing, and feature limits", async () => {
+    const res = await request(app).get("/api/pricing/plans");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("plans");
+    expect(Array.isArray(res.body.plans)).toBe(true);
+    expect(res.body.plans.length).toBeGreaterThanOrEqual(3);
+    const proPlan = res.body.plans.find((p: any) => p.id === "pro");
+    expect(proPlan).toBeDefined();
+    expect(proPlan.monthlyPrice).toHaveProperty("USD");
+    expect(proPlan.monthlyPrice).toHaveProperty("KES");
+  });
+
+  it("GET /api/pricing/quote - calculates personalized discount quote", async () => {
+    const res = await request(app).get("/api/pricing/quote?plan=pro&currency=USD");
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty("plan", "pro");
+    expect(res.body).toHaveProperty("basePrice");
+    expect(res.body).toHaveProperty("finalPrice");
+    expect(res.body).toHaveProperty("supportedPaymentGateways");
+  });
+
   it("GET /api/health - returns database and system health status", async () => {
     const res = await request(app).get("/api/health");
     expect([200, 500]).toContain(res.status);

@@ -13,6 +13,7 @@ import reportsRouter from "./routes/reports";
 import locationsRouter from "./routes/locations";
 import syncRouter from "./routes/sync";
 import adminRouter from "./routes/admin";
+import pricingRouter from "./routes/pricing";
 import swaggerRouter from "./docs/swagger";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
@@ -46,6 +47,7 @@ app.get("/", (_req, res) => {
     modules: {
       health: "/api/health",
       docs: "/api/docs",
+      pricing: "/api/pricing/plans",
       profiles: "/api/profiles",
       admin: "/api/admin/users",
       projects: "/api/projects",
@@ -64,6 +66,7 @@ app.get("/", (_req, res) => {
 
 // API Routes
 app.use("/api/health", healthRouter);
+app.use("/api/pricing", pricingRouter);
 app.use("/api/profiles", profilesRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/projects", projectsRouter);
