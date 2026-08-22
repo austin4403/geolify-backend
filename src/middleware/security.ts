@@ -44,8 +44,13 @@ const DEFAULT_ORIGINS = [
 
 export const corsMiddleware = cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests (like mobile apps, curl, server-to-server) where origin is undefined
+    // Allow non-browser requests where origin is undefined
     if (!origin) {
+      return callback(null, true);
+    }
+
+    // In development mode, allow any localhost/127.0.0.1/local network origins
+    if (process.env.NODE_ENV !== "production" || origin.includes("localhost") || origin.includes("127.0.0.1")) {
       return callback(null, true);
     }
     
@@ -62,7 +67,14 @@ export const corsMiddleware = cors({
   },
   credentials: true,
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "x-user-id"],
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Requested-With",
+    "Accept",
+    "x-user-id",
+    "x-user-email",
+  ],
   exposedHeaders: ["Content-Disposition"],
   maxAge: 86400, // 24 hours
 });
