@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db";
-import { userProfiles } from "../db/schema";
+import { userProfiles, promoCodes } from "../db/schema";
+import { sql } from "drizzle-orm";
 import { eq } from "drizzle-orm";
 
 const router = Router();
@@ -166,6 +167,56 @@ router.get("/quote", async (req: Request, res: Response) => {
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to generate price quote: " + error.message });
+  }
+});
+
+
+// 3. POST /api/pricing/validate-promo - Validate a promo / voucher code
+router.post("/validate-promo", async (req: Request, res: Response) => {
+  try {
+    const rawCode = ((req.body.code as string) || "").trim().toUpperCase();
+    if (!rawCode) {
+      res.status(400).json({ error: "Promo code is required" });
+      return;
+    }
+
+    const [promo] = await db
+      .select()
+      .from(promoCodes)
+      .where(sql`UPPER(${promoCodes.code}) = ${rawCode}`)
+      .limit(1);
+
+    if (!promo) {
+      res.status(404).json({ error: "Promo code does not exist or is invalid." });
+      return;
+    }
+
+    if (!promo.isActive) {
+      res.status(400).json({ error: "Promo code is currently inactive or disabled." });
+      return;
+    }
+
+    if (promo.expiresAt && new Date(promo.expiresAt) < new Date()) {
+      res.status(400).json({ error: "Promo code has expired." });
+      return;
+    }
+
+    if (promo.maxUses !== null && promo.timesUsed >= promo.maxUses) {
+      res.status(400).json({ error: "Promo code has reached its maximum usage limit." });
+      return;
+    }
+
+    res.json({
+      status: "success",
+      valid: true,
+      data: {
+        code: promo.code,
+        discountPercent: promo.discountPercent,
+        description: promo.description || promo.discountPercent + "% Discount",
+      },
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to validate promo code: " + error.message });
   }
 });
 

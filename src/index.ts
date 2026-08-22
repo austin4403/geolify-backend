@@ -18,7 +18,10 @@ import pricingRouter from "./routes/pricing";
 import checkoutRouter from "./routes/checkout";
 import webhooksRouter from "./routes/webhooks";
 import swaggerRouter from "./docs/swagger";
+import tilesRouter from "./routes/tiles";
+import geologyRouter from "./routes/geology";
 import { startSubscriptionSweeper } from "./services/subscriptionSweeper";
+import { startNightlyTilePrewarmCron } from "./services/tilePrewarm";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
@@ -87,6 +90,8 @@ app.use("/api/uploads", uploadsRouter);
 app.use("/api", eventsRouter);
 app.use("/api", reportsRouter);
 app.use("/api/locations", locationsRouter);
+app.use("/api/tiles", tilesRouter);
+app.use("/api/geology", geologyRouter);
 app.use("/api", syncRouter);
 
 // 404 Catch-All Handler
@@ -104,6 +109,9 @@ if (process.env.NODE_ENV !== "test") {
 
     // Start background subscription expiry sweeper (runs every 1 hour)
     startSubscriptionSweeper(60 * 60 * 1000);
+
+    // Start background nightly 00:00 EAT Tile Pre-Synthesis Cron
+    startNightlyTilePrewarmCron();
   });
 }
 

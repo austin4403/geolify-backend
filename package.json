@@ -11,7 +11,8 @@
     "test:security": "vitest run tests/security",
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "tiles:prewarm": "node scripts/prewarm-tiles.mjs"
   },
   "keywords": [],
   "type": "commonjs",

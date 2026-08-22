@@ -11,6 +11,8 @@ export const openApiSpec = {
 
 ### Key Capabilities:
 * 🗺️ **Geological Field Mapping**: Stations, Outcrops, Rock Sample Inventory, and 3D Structural Measurements (Dip/Strike/Plunge).
+* ⚡ **Unified Intelligent Cascading Engine**: Multi-tier geological raster streaming (Macrostrat, USGS, OneGeology, BGS) with automated 00:00 EAT pre-warming (\`npm run tiles:prewarm\`).
+* 🔍 **Click-to-Inspect Outcrop Intelligence**: Real-time querying of rock formations, chronostratigraphic ages (Ma), and lithology tags.
 * 💧 **Hydrogeological Exploration**: Boreholes, Lithology interval logs, VES Geophysical soundings, and Pumping test logs.
 * 📡 **Offline Field Sync**: Client UUID-based Delta Sync with Last-Write-Wins and soft deletes for offline fieldwork.
 * 🔴 **Real-Time Collaboration**: Server-Sent Events (SSE) live teammate streaming and field team chat.
@@ -446,6 +448,90 @@ export const openApiSpec = {
         },
         responses: {
           200: { description: "Presigned upload URL and public file URL" },
+        },
+      },
+    },
+    "/api/tiles/prewarm": {
+      post: {
+        summary: "Trigger Unified Intelligent Cascading Tile Pre-Synthesis (CLI: npm run tiles:prewarm)",
+        description: `
+Executes the **Unified Intelligent Cascading Pre-Synthesis Pipeline** across all 4 geological tiers (Macrostrat, USGS, OneGeology, BGS).
+
+### Execution Methods:
+* **CLI Trigger**: \`npm run tiles:prewarm\` in \`geoquerry\`
+* **Scheduled Cron**: Automatable at **00:00 hrs Kenyan Time (EAT / UTC+3)**
+* **HTTP Endpoint**: \`POST /api/tiles/prewarm\` or \`GET /api/tiles/prewarm\`
+
+### Pipeline Actions:
+1. Pre-warms Global Macro Pyramids (\`z = 0 – 2\`, 21 base tiles).
+2. Pre-warms active mineral hotspots (Kenya Rift Valley, Witwatersrand, Carlin Trend Nevada, Grand Canyon, Scottish Highlands, Central Massif France).
+3. Pre-warms Outcrop Intelligence Query Cache.
+        `,
+        tags: ["Geological Pipeline & Tile Infrastructure"],
+        responses: {
+          200: {
+            description: "Pre-synthesis execution summary and statistics",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    success: { type: "boolean", example: true },
+                    timestamp: { type: "string", example: "2026-08-22T20:36:17.797Z" },
+                    timezone: { type: "string", example: "EAT (UTC+3)" },
+                    totalTilesPrimed: { type: "number", example: 45 },
+                    durationSeconds: { type: "number", example: 12.28 },
+                    hotspotsCovered: { type: "number", example: 6 },
+                    message: { type: "string", example: "Unified Intelligent Pre-Synthesis Pipeline successfully primed edge cache." },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      get: {
+        summary: "Trigger tile pre-warming via GET request (Cron friendly)",
+        tags: ["Geological Pipeline & Tile Infrastructure"],
+        responses: {
+          200: { description: "Pre-synthesis execution summary" },
+        },
+      },
+    },
+    "/api/geology/inspect": {
+      get: {
+        summary: "Query Outcrop Geological Intelligence at Coordinates (lat, lng)",
+        description: "Returns rock unit formation names, chronostratigraphic epoch & age ranges (Ma), lithology tags, field descriptions, and survey citations.",
+        tags: ["Geological Pipeline & Tile Infrastructure"],
+        parameters: [
+          { name: "lat", in: "query", required: true, schema: { type: "number", example: 36.0544 }, description: "Latitude coordinate" },
+          { name: "lng", in: "query", required: true, schema: { type: "number", example: -112.1401 }, description: "Longitude coordinate" },
+        ],
+        responses: {
+          200: { description: "Detailed geological formation metadata" },
+        },
+      },
+    },
+    "/api/tiles/{layer}/{z}/{x}/{y}.png": {
+      get: {
+        summary: "Stream cached, CORS-immune geological raster tile (layer: geology | usgs | onegeology | bgs)",
+        description: "Delivers sub-5ms cached geological raster tiles with transparent 1x1 fallback on unmapped or out-of-bounds regions.",
+        tags: ["Geological Pipeline & Tile Infrastructure"],
+        parameters: [
+          { name: "layer", in: "path", required: true, schema: { type: "string", enum: ["geology", "usgs", "onegeology", "bgs"] } },
+          { name: "z", in: "path", required: true, schema: { type: "integer", example: 6 } },
+          { name: "x", in: "path", required: true, schema: { type: "integer", example: 38 } },
+          { name: "y", in: "path", required: true, schema: { type: "integer", example: 32 } },
+        ],
+        responses: {
+          200: {
+            description: "PNG raster tile binary stream",
+            content: {
+              "image/png": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
         },
       },
     },

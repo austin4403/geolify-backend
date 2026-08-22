@@ -87,16 +87,15 @@ router.post("/register", async (req: Request, res: Response) => {
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
-    // Determine initial benefit tier
-    const isLeadDev = normalizedEmail === "odhiambo4403@gmail.com" || normalizedEmail === "austin@geoquerry.com";
+    // Default standard tier and "users" role for all new signups
     const resolvedTier = resolveBestBenefitTier({
       email: normalizedEmail,
-      isCoreDevApproved: isLeadDev,
+      isCoreDevApproved: false,
       registrationDate: new Date(),
     });
 
     const userId = `usr_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const userRole = isLeadDev ? "lead_dev" : "user";
+    const userRole = "users";
 
     // Insert user into PostgreSQL
     const [newUser] = await db
@@ -116,7 +115,7 @@ router.post("/register", async (req: Request, res: Response) => {
         benefitTier: resolvedTier.tier,
         discountPercent: resolvedTier.discountPercent,
         discountExpiresAt: resolvedTier.discountExpiresAt,
-        subscriptionTier: isLeadDev ? "pro" : "free",
+        subscriptionTier: "free",
         subscriptionStatus: "active",
       })
       .returning();

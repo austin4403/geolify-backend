@@ -322,3 +322,25 @@ export const projectMessagesRelations = relations(projectMessages, ({ one }) => 
     references: [projects.id],
   }),
 }));
+
+export const liveLocationsRelations = relations(liveLocations, ({ one }) => ({
+  project: one(projects, {
+    fields: [liveLocations.projectId],
+    references: [projects.id],
+  }),
+}));
+
+// 11. Promotional & Voucher Codes
+export const promoCodes = pgTable("promo_codes", {
+  id: serial("id").primaryKey(),
+  code: text("code").notNull().unique(),
+  discountPercent: doublePrecision("discount_percent").notNull(),
+  description: text("description"),
+  maxUses: integer("max_uses"),
+  timesUsed: integer("times_used").default(0).notNull(),
+  isActive: boolean("is_active").default(true).notNull(),
+  expiresAt: timestamp("expires_at"),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
