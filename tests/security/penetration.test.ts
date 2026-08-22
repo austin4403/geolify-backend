@@ -3,7 +3,7 @@ import request from "supertest";
 import app from "../../src/index";
 import { sanitizeCsvField, sanitizeFileName } from "../../src/utils/sanitize";
 
-describe("Geolify AppSec & Penetration Testing Suite", () => {
+describe("GeoQuerry AppSec & Penetration Testing Suite", () => {
   describe("1. Security Headers Audit (OWASP A05:2021 Security Misconfiguration)", () => {
     it("enforces strict security headers via Helmet", async () => {
       const res = await request(app).get("/api/health");

@@ -10,7 +10,7 @@ describe("JWT Authentication & Offline Field Sync Tests", () => {
     const secret = new TextEncoder().encode("dev-secret-key-12345678901234567890");
     const jwt = await new SignJWT({
       sub: "geologist_user_99",
-      email: "jane.doe@geolify.com",
+      email: "jane.doe@geoquerry.com",
       role: "editor",
     })
       .setProtectedHeader({ alg: "HS256" })
@@ -21,7 +21,7 @@ describe("JWT Authentication & Offline Field Sync Tests", () => {
     const user = await verifyToken(jwt);
     expect(user).not.toBeNull();
     expect(user?.userId).toBe("geologist_user_99");
-    expect(user?.email).toBe("jane.doe@geolify.com");
+    expect(user?.email).toBe("jane.doe@geoquerry.com");
   });
 
   it("GET /api/projects/:id/sync/pull - rejects unauthenticated requests", async () => {

@@ -35,8 +35,8 @@ const presignRequestSchema = z.object({
 const R2_ACCOUNT_ID = process.env.R2_ACCOUNT_ID;
 const R2_ACCESS_KEY_ID = process.env.R2_ACCESS_KEY_ID;
 const R2_SECRET_ACCESS_KEY = process.env.R2_SECRET_ACCESS_KEY;
-const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || "geolify-media";
-const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || `https://pub-r2.geolify.com`;
+const R2_BUCKET_NAME = process.env.R2_BUCKET_NAME || "geoquerry-media";
+const R2_PUBLIC_URL = process.env.R2_PUBLIC_URL || `https://pub-r2.geoquerry.com`;
 
 let s3Client: S3Client | null = null;
 

@@ -38,7 +38,7 @@ app.use("/api/docs", swaggerRouter);
 // Root route
 app.get("/", (_req, res) => {
   res.json({
-    name: "Geolify Backend API",
+    name: "GeoQuerry Backend API",
     version: "2.0.0",
     status: "online",
     documentation: "/api/docs",
@@ -83,7 +83,7 @@ app.use(errorHandler);
 // Start server only when not running in test mode
 if (process.env.NODE_ENV !== "test") {
   app.listen(PORT, () => {
-    console.log(`🚀 Geolify server running on http://localhost:${PORT}`);
+    console.log(`🚀 GeoQuerry server running on http://localhost:${PORT}`);
     console.log(`🩺 Health check available at http://localhost:${PORT}/api/health`);
     console.log(`📑 Swagger Documentation available at http://localhost:${PORT}/api/docs`);
   });

@@ -116,7 +116,7 @@ router.get(
         features,
       };
 
-      res.setHeader("Content-Disposition", `attachment; filename="geolify-project-${project.id}.geojson"`);
+      res.setHeader("Content-Disposition", `attachment; filename="geoquerry-project-${project.id}.geojson"`);
       res.setHeader("Content-Type", "application/geo+json");
       res.json(geoJson);
     } catch (error: any) {
@@ -273,7 +273,7 @@ router.get(
       const totalBoreholes = project.boreholes.length;
 
       res.json({
-        reportTitle: `Geolify Survey Report — ${project.name}`,
+        reportTitle: `GeoQuerry Survey Report — ${project.name}`,
         project: {
           id: project.id,
           name: project.name,

@@ -1,4 +1,4 @@
-# 🛡️ Geolify Backend — Security Audit & Penetration Testing Report
+# 🛡️ GeoQuerry Backend — Security Audit & Penetration Testing Report
 
 **Version**: 2.0.0-PROD  
 **Date**: August 21, 2026  
@@ -9,7 +9,7 @@
 
 ## 📊 Executive Summary
 
-A comprehensive multi-round security audit and penetration testing assessment was conducted on the **Geolify Backend API**. The objective was to evaluate the backend against the **OWASP Top 10:2021**, identify broken object-level authorization (BOLA/IDOR), formula injection, Denial of Service (DoS) vectors, input validation flaws, information leakage, and missing security controls, and systematically remediate each vulnerability.
+A comprehensive multi-round security audit and penetration testing assessment was conducted on the **GeoQuerry Backend API**. The objective was to evaluate the backend against the **OWASP Top 10:2021**, identify broken object-level authorization (BOLA/IDOR), formula injection, Denial of Service (DoS) vectors, input validation flaws, information leakage, and missing security controls, and systematically remediate each vulnerability.
 
 Across **5 iterative testing and hardening cycles**, all identified vulnerabilities were resolved, hardened with production-grade defense-in-depth controls, and verified via an automated test harness (`vitest` + `supertest`).
 
@@ -170,7 +170,7 @@ npm run build
 
 ## 🏁 Final Certification
 
-All 5 hardening iterations have been completed successfully. The Geolify Backend API is now hardened with:
+All 5 hardening iterations have been completed successfully. The GeoQuerry Backend API is now hardened with:
 - **Strict Role-Based Access Control (RBAC)** across all project resources
 - **Full OWASP Top 10 Defenses** (Formula injection sanitization, path traversal elimination, security headers, DoS rate limiting)
 - **Safe Error Boundaries** preventing database structure disclosure

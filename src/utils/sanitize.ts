@@ -1,5 +1,5 @@
 /**
- * Input sanitization utilities for Geolify API
+ * Input sanitization utilities for GeoQuerry API
  * Mitigates CSV Injection (CWE-1236), Path Traversal (CWE-22), and Control Character Injection
  */
 

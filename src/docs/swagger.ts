@@ -4,10 +4,10 @@ import swaggerUi from "swagger-ui-express";
 export const openApiSpec = {
   openapi: "3.1.0",
   info: {
-    title: "Geolify Backend API",
+    title: "GeoQuerry Backend API",
     version: "2.0.0",
     description: `
-**Geolify** is an enterprise-grade geological field mapping, hydrogeological surveying, and real-time collaborative exploration API.
+**GeoQuerry** is an enterprise-grade geological field mapping, hydrogeological surveying, and real-time collaborative exploration API.
 
 ### Key Capabilities:
 * 🗺️ **Geological Field Mapping**: Stations, Outcrops, Rock Sample Inventory, and 3D Structural Measurements (Dip/Strike/Plunge).
@@ -17,8 +17,8 @@ export const openApiSpec = {
 * 🛡️ **Security**: JWT/JWKS token authentication, RBAC authorization, and CSV formula injection shielding.
     `,
     contact: {
-      name: "Geolify Engineering Team",
-      url: "https://geolify.com",
+      name: "GeoQuerry Engineering Team",
+      url: "https://geoquerry.com",
     },
   },
   servers: [

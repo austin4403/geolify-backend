@@ -8,7 +8,7 @@ dotenv.config();
 
 const databaseUrl =
   process.env.DATABASE_URL ||
-  (process.env.NODE_ENV === "test" ? "postgresql://mock_user:mock_pass@localhost:5432/geolify_mock" : "");
+  (process.env.NODE_ENV === "test" ? "postgresql://mock_user:mock_pass@localhost:5432/geoquerry_mock" : "");
 
 if (!databaseUrl) {
   throw new Error("DATABASE_URL is missing. Please check your .env.local file.");

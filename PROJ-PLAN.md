@@ -1,4 +1,4 @@
-# 🌍 Geolify Backend — Master Architecture Specification
+# 🌍 GeoQuerry Backend — Master Architecture Specification
 
 This document records the complete, agreed-upon architectural design decisions established during the system alignment interview.
 

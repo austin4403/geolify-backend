@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import app from "../../src/index";
 
-describe("Geolify API Integration Tests", () => {
+describe("GeoQuerry API Integration Tests", () => {
   it("GET / - returns API status, documentation link, and modules metadata", async () => {
     const res = await request(app).get("/");
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty("name", "Geolify Backend API");
+    expect(res.body).toHaveProperty("name", "GeoQuerry Backend API");
     expect(res.body).toHaveProperty("version", "2.0.0");
     expect(res.body).toHaveProperty("status", "online");
     expect(res.body).toHaveProperty("documentation", "/api/docs");
@@ -19,7 +19,7 @@ describe("Geolify API Integration Tests", () => {
     const res = await request(app).get("/api/docs/openapi.json");
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty("openapi", "3.1.0");
-    expect(res.body.info).toHaveProperty("title", "Geolify Backend API");
+    expect(res.body.info).toHaveProperty("title", "GeoQuerry Backend API");
     expect(res.body.paths).toHaveProperty("/api/health");
     expect(res.body.paths).toHaveProperty("/api/projects/{projectId}/sync/pull");
     expect(res.body.paths).toHaveProperty("/api/projects/{projectId}/sync/push");
