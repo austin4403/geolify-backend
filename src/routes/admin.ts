@@ -4,6 +4,7 @@ import { userProfiles } from "../db/schema";
 import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
+import { sweepExpiredSubscriptions } from "../services/subscriptionSweeper";
 
 const router = Router();
 
@@ -209,6 +210,20 @@ router.post("/student-applications/:userId/review", requireAuth, requireLeadDev,
       return;
     }
     res.status(500).json({ error: "Review action failed: " + error.message });
+  }
+});
+
+// 5. POST /api/admin/subscriptions/sweep - Lead Dev triggers subscription expiry sweep
+router.post("/subscriptions/sweep", requireAuth, requireLeadDev, async (_req: Request, res: Response) => {
+  try {
+    const result = await sweepExpiredSubscriptions();
+    res.json({
+      status: "success",
+      message: `Subscription sweep completed. ${result.sweptCount} expired subscriptions downgraded.`,
+      data: result,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Subscription sweep failed: " + error.message });
   }
 });
 

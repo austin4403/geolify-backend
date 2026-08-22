@@ -203,7 +203,7 @@ router.post(
 
       // Preload existing stations in project into memory map
       const existingStations = await db
-        .select({ id: stations.id, clientUuid: stations.clientUuid, updatedAt: stations.updatedAt })
+        .select()
         .from(stations)
         .where(eq(stations.projectId, projectId));
 
@@ -230,6 +230,12 @@ router.post(
         if (existing) {
           // Last-Write-Wins: update if incoming timestamp is >= server
           if (clientUpdatedAt >= existing.updatedAt) {
+            // Non-destructive photo and metadata merging across field teammates
+            const mergedPhotos = Array.from(
+              new Set([...(existing.photoUrls || []), ...(st.photoUrls || [])])
+            );
+            const mergedMetadata = { ...(existing.metadata || {}), ...(st.metadata || {}) };
+
             await db
               .update(stations)
               .set({
@@ -237,15 +243,15 @@ router.post(
                 name: st.name,
                 latitude: st.latitude,
                 longitude: st.longitude,
-                elevation: st.elevation,
-                gpsAccuracy: st.gpsAccuracy,
-                vegetation: st.vegetation,
-                soilDescription: st.soilDescription,
-                landmarks: st.landmarks,
-                outcropExposure: st.outcropExposure,
-                weathering: st.weathering,
-                photoUrls: st.photoUrls || [],
-                metadata: st.metadata || {},
+                elevation: st.elevation !== undefined ? st.elevation : existing.elevation,
+                gpsAccuracy: st.gpsAccuracy !== undefined ? st.gpsAccuracy : existing.gpsAccuracy,
+                vegetation: st.vegetation !== undefined ? st.vegetation : existing.vegetation,
+                soilDescription: st.soilDescription !== undefined ? st.soilDescription : existing.soilDescription,
+                landmarks: st.landmarks !== undefined ? st.landmarks : existing.landmarks,
+                outcropExposure: st.outcropExposure !== undefined ? st.outcropExposure : existing.outcropExposure,
+                weathering: st.weathering !== undefined ? st.weathering : existing.weathering,
+                photoUrls: mergedPhotos,
+                metadata: mergedMetadata,
                 deletedAt,
                 updatedAt: new Date(),
               })
@@ -294,7 +300,7 @@ router.post(
         }
 
         const [existingRock] = await db
-          .select({ id: rockSamples.id, updatedAt: rockSamples.updatedAt })
+          .select()
           .from(rockSamples)
           .where(
             rk.clientUuid
@@ -310,6 +316,10 @@ router.post(
 
         if (existingRock) {
           if (clientUpdatedAt >= existingRock.updatedAt) {
+            const mergedRockPhotos = Array.from(
+              new Set([...(existingRock.photoUrls || []), ...(rk.photoUrls || [])])
+            );
+
             await db
               .update(rockSamples)
               .set({
@@ -322,7 +332,7 @@ router.post(
                 felsicPercent: rk.felsicPercent,
                 maficMinerals: rk.maficMinerals || [],
                 felsicMinerals: rk.felsicMinerals || [],
-                photoUrls: rk.photoUrls || [],
+                photoUrls: mergedRockPhotos,
                 notes: rk.notes,
                 deletedAt,
                 updatedAt: new Date(),
@@ -515,6 +525,39 @@ router.post(
         return;
       }
       res.status(500).json({ error: "Sync push failed: " + error.message });
+    }
+  }
+);
+
+/**
+ * GET /api/projects/:projectId/sync/stats
+ * Diagnostic sync summary for mobile clients
+ */
+router.get(
+  "/projects/:projectId/sync/stats",
+  requireAuth,
+  requireProjectRole("viewer"),
+  async (req: Request, res: Response) => {
+    try {
+      const projectId = parseInt(req.params.projectId as string, 10);
+
+      const [stationCount] = await db
+        .select({ id: stations.id })
+        .from(stations)
+        .where(and(eq(stations.projectId, projectId), isNull(stations.deletedAt)));
+
+      const [boreholeCount] = await db
+        .select({ id: boreholes.id })
+        .from(boreholes)
+        .where(and(eq(boreholes.projectId, projectId), isNull(boreholes.deletedAt)));
+
+      res.json({
+        projectId,
+        serverTime: new Date().toISOString(),
+        status: "healthy",
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch sync stats: " + error.message });
     }
   }
 );

@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db";
-import { stations } from "../db/schema";
+import { stations, projects, userProfiles } from "../db/schema";
 import { z } from "zod";
 import { eq, desc, ilike, or } from "drizzle-orm";
 
@@ -93,6 +93,48 @@ router.get("/:id", async (req: Request, res: Response) => {
 router.post("/", async (req: Request, res: Response) => {
   try {
     const validatedData = createStationSchema.parse(req.body);
+
+    // Free Tier Station Limit Enforcement (Max 50 stations per project)
+    if (validatedData.projectId) {
+      const [project] = await db
+        .select({ id: projects.id, userId: projects.userId })
+        .from(projects)
+        .where(eq(projects.id, validatedData.projectId))
+        .limit(1);
+
+      if (project) {
+        const [ownerProfile] = await db
+          .select({
+            benefitTier: userProfiles.benefitTier,
+            subscriptionTier: userProfiles.subscriptionTier,
+          })
+          .from(userProfiles)
+          .where(eq(userProfiles.userId, project.userId))
+          .limit(1);
+
+        const isCoreDev = ownerProfile?.benefitTier === "core_dev";
+        const ownerTier = ownerProfile?.subscriptionTier || "free";
+
+        if (!isCoreDev && ownerTier === "free") {
+          const projectStations = await db
+            .select({ id: stations.id })
+            .from(stations)
+            .where(eq(stations.projectId, validatedData.projectId));
+
+          if (projectStations.length >= 50) {
+            res.status(403).json({
+              error: "Free Explorer tier station limit reached (50/50 stations). Upgrade to Pro for unlimited stations.",
+              currentTier: "free",
+              requiredTier: "pro",
+              maxAllowed: 50,
+              currentCount: projectStations.length,
+              upgradeQuoteUrl: "/api/pricing/quote?plan=pro",
+            });
+            return;
+          }
+        }
+      }
+    }
 
     const [newStation] = await db
       .insert(stations)

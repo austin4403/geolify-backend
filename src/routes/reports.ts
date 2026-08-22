@@ -4,15 +4,17 @@ import { projects, stations, boreholes, structuralMeasurements } from "../db/sch
 import { eq } from "drizzle-orm";
 import { sanitizeCsvField } from "../utils/sanitize";
 import { requireProjectRole } from "../middleware/auth";
+import { requireSubscription } from "../middleware/subscription";
 import { strictLimiter } from "../middleware/security";
 
 const router = Router();
 
-// 1. GET /api/projects/:projectId/export/geojson - GeoJSON FeatureCollection Export
+// 1. GET /api/projects/:projectId/export/geojson - GeoJSON FeatureCollection Export (Pro/Premium feature)
 router.get(
   "/projects/:projectId/export/geojson",
   strictLimiter,
   requireProjectRole("viewer"),
+  requireSubscription("pro"),
   async (req: Request, res: Response) => {
     try {
       const rawId = Array.isArray(req.params.projectId) ? req.params.projectId[0] : req.params.projectId;

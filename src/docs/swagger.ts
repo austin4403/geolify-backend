@@ -251,6 +251,179 @@ export const openApiSpec = {
         },
       },
     },
+    "/api/pricing/plans": {
+      get: {
+        summary: "List all subscription tiers, pricing (USD/KES), and feature quotas",
+        tags: ["Monetization & Pricing"],
+        responses: {
+          200: { description: "List of plans with features and limits" },
+        },
+      },
+    },
+    "/api/pricing/quote": {
+      get: {
+        summary: "Calculate personalized discounted price quote based on user benefitTier",
+        tags: ["Monetization & Pricing"],
+        parameters: [
+          { name: "plan", in: "query", schema: { type: "string", enum: ["free", "pro", "premium"] } },
+          { name: "currency", in: "query", schema: { type: "string", enum: ["USD", "KES"] } },
+          { name: "cycle", in: "query", schema: { type: "string", enum: ["monthly", "annual"] } },
+        ],
+        responses: {
+          200: { description: "Personalized price quote with applied discount percent and final price" },
+        },
+      },
+    },
+    "/api/checkout/stripe/create-session": {
+      post: {
+        summary: "Create a hosted Stripe Checkout session for Card / Apple Pay billing",
+        tags: ["Payments & Checkout"],
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["planId"],
+                properties: {
+                  planId: { type: "string", enum: ["pro", "premium"] },
+                  billingCycle: { type: "string", enum: ["monthly", "annual"], default: "monthly" },
+                  successUrl: { type: "string", format: "uri" },
+                  cancelUrl: { type: "string", format: "uri" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Hosted Stripe Checkout URL and session ID" },
+        },
+      },
+    },
+    "/api/checkout/mpesa/stk-push": {
+      post: {
+        summary: "Initiate Safaricom M-Pesa STK Push prompt to user's mobile phone",
+        tags: ["Payments & Checkout"],
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["planId", "phoneNumber"],
+                properties: {
+                  planId: { type: "string", enum: ["pro", "premium"] },
+                  billingCycle: { type: "string", enum: ["monthly", "annual"], default: "monthly" },
+                  phoneNumber: { type: "string", example: "0712345678" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "M-Pesa STK prompt sent to phone with checkoutRequestId" },
+        },
+      },
+    },
+    "/api/checkout/mpesa/status/{checkoutRequestId}": {
+      get: {
+        summary: "Check status of an M-Pesa STK Push payment",
+        tags: ["Payments & Checkout"],
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "checkoutRequestId", in: "path", required: true, schema: { type: "string" } },
+        ],
+        responses: {
+          200: { description: "Transaction status and M-Pesa receipt number" },
+        },
+      },
+    },
+    "/api/webhooks/stripe": {
+      post: {
+        summary: "Stripe Webhook Listener: processes checkout.session.completed & subscription changes",
+        tags: ["Webhooks"],
+        responses: {
+          200: { description: "Event received" },
+        },
+      },
+    },
+    "/api/webhooks/mpesa": {
+      post: {
+        summary: "Safaricom Daraja STK Callback: records receipt and activates subscription",
+        tags: ["Webhooks"],
+        responses: {
+          200: { description: "Safaricom acknowledgment format" },
+        },
+      },
+    },
+    "/api/profiles/apply-student": {
+      post: {
+        summary: "Submit student verification application with institution details & ID card URL",
+        tags: ["Profiles & Benefits"],
+        security: [{ BearerAuth: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["institutionName", "studentIdCardUrl"],
+                properties: {
+                  institutionName: { type: "string", example: "University of Nairobi" },
+                  studentIdCardUrl: { type: "string", format: "uri" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "Application status (auto-approved if academic email, otherwise pending)" },
+        },
+      },
+    },
+    "/api/admin/users": {
+      get: {
+        summary: "Lead Dev: List all users, active benefit tiers, and subscription statuses",
+        tags: ["Lead Dev Administration"],
+        security: [{ BearerAuth: [] }],
+        responses: {
+          200: { description: "List of users with benefit & discount tiers" },
+          403: { description: "Forbidden: Restricted to Lead Developer" },
+        },
+      },
+    },
+    "/api/admin/users/{userId}/tier": {
+      post: {
+        summary: "Lead Dev: Assign or override user benefit tier (e.g. promote to core_dev 100% free)",
+        tags: ["Lead Dev Administration"],
+        security: [{ BearerAuth: [] }],
+        parameters: [
+          { name: "userId", in: "path", required: true, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["tier"],
+                properties: {
+                  tier: { type: "string", enum: ["core_dev", "student", "beta_developer", "standard"] },
+                  customDiscountPercent: { type: "number", minimum: 0, maximum: 100 },
+                  expiresInDays: { type: "number" },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          200: { description: "User tier updated" },
+          403: { description: "Forbidden: Restricted to Lead Developer" },
+        },
+      },
+    },
     "/api/uploads/presigned-url": {
       post: {
         summary: "Generate presigned direct upload URL for S3 / Cloudflare R2",

@@ -17,6 +17,7 @@ import pricingRouter from "./routes/pricing";
 import checkoutRouter from "./routes/checkout";
 import webhooksRouter from "./routes/webhooks";
 import swaggerRouter from "./docs/swagger";
+import { startSubscriptionSweeper } from "./services/subscriptionSweeper";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
@@ -98,6 +99,9 @@ if (process.env.NODE_ENV !== "test") {
     console.log(`🚀 GeoQuerry server running on http://localhost:${PORT}`);
     console.log(`🩺 Health check available at http://localhost:${PORT}/api/health`);
     console.log(`📑 Swagger Documentation available at http://localhost:${PORT}/api/docs`);
+
+    // Start background subscription expiry sweeper (runs every 1 hour)
+    startSubscriptionSweeper(60 * 60 * 1000);
   });
 }
 

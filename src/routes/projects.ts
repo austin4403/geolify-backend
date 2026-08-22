@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { db } from "../db";
-import { projects, projectCollaborators } from "../db/schema";
+import { projects, projectCollaborators, userProfiles } from "../db/schema";
 import { z } from "zod";
 import { eq, desc, and } from "drizzle-orm";
 import { requireAuth, requireProjectRole } from "../middleware/auth";
@@ -121,6 +121,40 @@ router.get("/:id", requireProjectRole("viewer"), async (req: Request, res: Respo
 router.post("/", requireAuth, async (req: Request, res: Response) => {
   try {
     const validatedData = createProjectSchema.parse(req.body);
+    const creatorUserId = validatedData.userId;
+
+    // Check user's subscription and benefit tier
+    const [userProfile] = await db
+      .select({
+        benefitTier: userProfiles.benefitTier,
+        subscriptionTier: userProfiles.subscriptionTier,
+      })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, creatorUserId))
+      .limit(1);
+
+    const isCoreDev = userProfile?.benefitTier === "core_dev";
+    const userTier = userProfile?.subscriptionTier || "free";
+
+    // Free Tier Quota Limit: Max 3 Projects
+    if (!isCoreDev && userTier === "free") {
+      const activeProjects = await db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.userId, creatorUserId));
+
+      if (activeProjects.length >= 3) {
+        res.status(403).json({
+          error: "Free Explorer tier project limit reached (3/3). Upgrade to Pro for unlimited projects.",
+          currentTier: "free",
+          requiredTier: "pro",
+          maxAllowed: 3,
+          currentCount: activeProjects.length,
+          upgradeQuoteUrl: "/api/pricing/quote?plan=pro",
+        });
+        return;
+      }
+    }
 
     const [newProject] = await db
       .insert(projects)
