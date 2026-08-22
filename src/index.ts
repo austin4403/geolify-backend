@@ -14,6 +14,8 @@ import locationsRouter from "./routes/locations";
 import syncRouter from "./routes/sync";
 import adminRouter from "./routes/admin";
 import pricingRouter from "./routes/pricing";
+import checkoutRouter from "./routes/checkout";
+import webhooksRouter from "./routes/webhooks";
 import swaggerRouter from "./docs/swagger";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
@@ -48,6 +50,8 @@ app.get("/", (_req, res) => {
       health: "/api/health",
       docs: "/api/docs",
       pricing: "/api/pricing/plans",
+      checkout: "/api/checkout",
+      webhooks: "/api/webhooks",
       profiles: "/api/profiles",
       admin: "/api/admin/users",
       projects: "/api/projects",
@@ -67,6 +71,8 @@ app.get("/", (_req, res) => {
 // API Routes
 app.use("/api/health", healthRouter);
 app.use("/api/pricing", pricingRouter);
+app.use("/api/checkout", checkoutRouter);
+app.use("/api/webhooks", webhooksRouter);
 app.use("/api/profiles", profilesRouter);
 app.use("/api/admin", adminRouter);
 app.use("/api/projects", projectsRouter);

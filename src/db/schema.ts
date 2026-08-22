@@ -248,6 +248,25 @@ export const locations = pgTable("locations", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
+// 10. Payment Transactions (Stripe & M-Pesa Audit Ledger)
+export const paymentTransactions = pgTable("payment_transactions", {
+  id: serial("id").primaryKey(),
+  userId: text("user_id").notNull(),
+  provider: text("provider").notNull(),                  // "stripe", "mpesa", "paystack"
+  transactionRef: text("transaction_ref").notNull(),     // Stripe Session ID / CheckoutRequestID
+  mpesaReceiptNumber: text("mpesa_receipt_number"),      // e.g. "QK87JH2938"
+  planId: text("plan_id").notNull(),                     // "pro", "premium", "enterprise"
+  billingCycle: text("billing_cycle").notNull().default("monthly"), // "monthly", "annual"
+  currency: text("currency").notNull().default("USD"),   // "USD", "KES"
+  amount: doublePrecision("amount").notNull(),
+  discountAmount: doublePrecision("discount_amount").default(0),
+  phoneNumber: text("phone_number"),                     // For M-Pesa STK push
+  status: text("status").notNull().default("pending"),   // "pending", "completed", "failed", "cancelled"
+  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
 // Relational Definitions for Drizzle Queries
 export const projectsRelations = relations(projects, ({ many }) => ({
   collaborators: many(projectCollaborators),
