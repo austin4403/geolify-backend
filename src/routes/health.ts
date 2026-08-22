@@ -22,6 +22,7 @@ router.get("/", async (_req: Request, res: Response) => {
   } catch (error: any) {
     res.status(500).json({
       status: "unhealthy",
+      environment: process.env.NODE_ENV || "development",
       database: {
         connected: false,
         error: error.message,

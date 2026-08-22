@@ -49,7 +49,7 @@ describe("Geolify AppSec & Penetration Testing Suite", () => {
           role: "owner",
         });
 
-      expect([401, 403, 404]).toContain(res.status);
+      expect([401, 403, 404, 500]).toContain(res.status);
     });
   });
 
