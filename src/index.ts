@@ -12,6 +12,7 @@ import eventsRouter from "./routes/events";
 import reportsRouter from "./routes/reports";
 import locationsRouter from "./routes/locations";
 import syncRouter from "./routes/sync";
+import adminRouter from "./routes/admin";
 import swaggerRouter from "./docs/swagger";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
@@ -46,6 +47,7 @@ app.get("/", (_req, res) => {
       health: "/api/health",
       docs: "/api/docs",
       profiles: "/api/profiles",
+      admin: "/api/admin/users",
       projects: "/api/projects",
       stations: "/api/stations",
       rocks: "/api/stations/:stationId/rocks",
@@ -63,6 +65,7 @@ app.get("/", (_req, res) => {
 // API Routes
 app.use("/api/health", healthRouter);
 app.use("/api/profiles", profilesRouter);
+app.use("/api/admin", adminRouter);
 app.use("/api/projects", projectsRouter);
 app.use("/api/stations", stationsRouter);
 app.use("/api", rocksRouter);

@@ -4,7 +4,7 @@ import app from "../../src/index";
 import { verifyToken } from "../../src/middleware/auth";
 import { SignJWT } from "jose";
 
-describe("JWT Authentication & Offline Field Sync Tests", () => {
+describe("JWT Authentication, Customer Benefits & Admin RBAC Tests", () => {
   it("verifyToken correctly parses token payload and extracts user identity", async () => {
     // Generate test JWT
     const secret = new TextEncoder().encode("dev-secret-key-12345678901234567890");
@@ -41,5 +41,39 @@ describe("JWT Authentication & Offline Field Sync Tests", () => {
       });
     expect(res.status).toBe(401);
     expect(res.body).toHaveProperty("error");
+  });
+
+  it("GET /api/admin/users - rejects non-lead-dev users with 403 Forbidden", async () => {
+    const res = await request(app)
+      .get("/api/admin/users")
+      .set("x-user-id", "regular_user_123")
+      .set("x-user-email", "geologist@commercial.com");
+
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty("error");
+    expect(res.body.error).toContain("restricted exclusively to the Lead Developer");
+  });
+
+  it("POST /api/admin/users/:userId/tier - rejects unauthorized non-lead-dev tier assignment", async () => {
+    const res = await request(app)
+      .post("/api/admin/users/target_user_456/tier")
+      .set("x-user-id", "regular_user_123")
+      .send({
+        tier: "core_dev",
+      });
+
+    expect(res.status).toBe(403);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("POST /api/profiles/apply-student - rejects unauthenticated student application", async () => {
+    const res = await request(app)
+      .post("/api/profiles/apply-student")
+      .send({
+        institutionName: "University of Nairobi",
+        studentIdCardUrl: "https://example.com/id.jpg",
+      });
+
+    expect(res.status).toBe(401);
   });
 });

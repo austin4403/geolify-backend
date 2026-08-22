@@ -3,6 +3,8 @@ import { db } from "../db";
 import { userProfiles } from "../db/schema";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
+import { resolveBestBenefitTier, isAcademicEmail } from "../utils/benefitResolver";
+import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
@@ -34,12 +36,15 @@ const createProfileSchema = z.object({
     .min(3, "Username must be at least 3 characters")
     .max(30, "Username cannot exceed 30 characters")
     .regex(/^[a-zA-Z0-9_-]+$/, "Username can only contain letters, numbers, hyphens, and underscores"),
+  email: z.string().email().optional(),
   profession: z.string().optional(),
   organization: z.string().optional(),
   country: z.string().length(2, "Country must be a 2-letter ISO code (e.g. KE, US)").default("KE"),
   preferredCurrency: z.string().optional(),
   unitSystem: z.enum(["metric", "imperial"]).optional(),
   avatarUrl: z.string().url().optional(),
+  institutionName: z.string().optional(),
+  studentIdCardUrl: z.string().url().optional(),
 });
 
 // Partial Schema for Settings Update
@@ -58,6 +63,11 @@ const updateProfileSchema = z.object({
   unitSystem: z.enum(["metric", "imperial"]).optional(),
   avatarUrl: z.string().url().optional(),
   metadata: z.record(z.string(), z.any()).optional(),
+});
+
+const applyStudentSchema = z.object({
+  institutionName: z.string().min(2, "Institution name is required"),
+  studentIdCardUrl: z.string().url("Valid Student ID photo URL is required"),
 });
 
 // 1. GET /api/profiles/:userId - Get a user profile by their Auth user ID
@@ -99,7 +109,7 @@ router.get("/check-username/:username", async (req: Request, res: Response) => {
   }
 });
 
-// 3. POST /api/profiles/onboard - Complete user onboarding
+// 3. POST /api/profiles/onboard - Complete user onboarding with auto-calculated best benefit tier
 router.post("/onboard", async (req: Request, res: Response) => {
   try {
     const validatedData = createProfileSchema.parse(req.body);
@@ -123,18 +133,60 @@ router.post("/onboard", async (req: Request, res: Response) => {
     const currency = validatedData.preferredCurrency || defaults.currency;
     const units = validatedData.unitSystem || defaults.unitSystem;
 
+    // Resolve user email
+    const userEmail =
+      validatedData.email ||
+      req.user?.email ||
+      (req.headers["x-user-email"] as string) ||
+      "";
+
+    // Check if user is pre-approved as core dev via environment whitelist
+    const leadDevEmails = (process.env.LEAD_DEV_EMAILS || "").toLowerCase().split(",").map((s) => s.trim());
+    const leadDevIds = (process.env.LEAD_DEV_USER_IDS || "").split(",").map((s) => s.trim());
+
+    const isCoreDev =
+      (userEmail && leadDevEmails.includes(userEmail.toLowerCase())) ||
+      leadDevIds.includes(validatedData.userId);
+
+    // Compute highest-value benefit tier favoring client best
+    const benefit = resolveBestBenefitTier({
+      email: userEmail,
+      isCoreDevApproved: isCoreDev,
+    });
+
+    const isAcademic = isAcademicEmail(userEmail);
+
     const [newProfile] = await db
       .insert(userProfiles)
       .values({
-        ...validatedData,
+        userId: validatedData.userId,
+        fullName: validatedData.fullName,
+        username: validatedData.username,
+        profession: validatedData.profession,
+        organization: validatedData.organization,
         country: upperCountry,
         preferredCurrency: currency,
         unitSystem: units,
+        avatarUrl: validatedData.avatarUrl,
         onboardingCompleted: true,
+        benefitTier: benefit.tier,
+        discountPercent: benefit.discountPercent,
+        discountExpiresAt: benefit.discountExpiresAt,
+        studentVerificationStatus: isAcademic ? "approved" : validatedData.studentIdCardUrl ? "pending" : "none",
+        studentIdCardUrl: validatedData.studentIdCardUrl,
+        institutionName: validatedData.institutionName,
       })
       .returning();
 
-    res.status(201).json({ data: newProfile });
+    res.status(201).json({
+      data: newProfile,
+      benefitInfo: {
+        tier: benefit.tier,
+        discountPercent: benefit.discountPercent,
+        discountExpiresAt: benefit.discountExpiresAt,
+        reason: benefit.reason,
+      },
+    });
   } catch (error: any) {
     if (error instanceof z.ZodError) {
       res.status(400).json({ error: error.issues });
@@ -144,7 +196,69 @@ router.post("/onboard", async (req: Request, res: Response) => {
   }
 });
 
-// 4. PATCH /api/profiles/:userId - Update profile settings (currency, units, info)
+// 4. POST /api/profiles/apply-student - Submit student discount application
+router.post("/apply-student", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const currentUserId = req.user!.userId;
+    const parsed = applyStudentSchema.parse(req.body);
+
+    const userEmail = req.user?.email || (req.headers["x-user-email"] as string) || "";
+    const isAcademic = isAcademicEmail(userEmail);
+
+    // If already has academic email, auto-approve immediately
+    let newTier = "beta_developer";
+    let discount = 40;
+    let expiresAt: Date | null = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 365);
+    let status = "pending";
+
+    if (isAcademic) {
+      newTier = "student";
+      discount = 70;
+      status = "approved";
+    }
+
+    const [updated] = await db
+      .update(userProfiles)
+      .set({
+        institutionName: parsed.institutionName,
+        studentIdCardUrl: parsed.studentIdCardUrl,
+        studentVerificationStatus: status,
+        ...(isAcademic
+          ? {
+              benefitTier: "student",
+              discountPercent: 70,
+              discountExpiresAt: expiresAt,
+            }
+          : {}),
+        updatedAt: new Date(),
+      })
+      .where(eq(userProfiles.userId, currentUserId))
+      .returning();
+
+    if (!updated) {
+      res.status(404).json({ error: "User profile not found. Please complete onboarding first." });
+      return;
+    }
+
+    res.json({
+      status: "success",
+      verificationStatus: status,
+      message: isAcademic
+        ? "Academic email verified! 70% Student discount activated for 1 year."
+        : "Student verification submitted successfully. Under review by Lead Developer.",
+      data: updated,
+    });
+  } catch (error: any) {
+    if (error instanceof z.ZodError) {
+      res.status(400).json({ error: error.issues });
+      return;
+    }
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 5. PATCH /api/profiles/:userId - Update profile settings
 router.patch("/:userId", async (req: Request, res: Response) => {
   try {
     const rawUserId = Array.isArray(req.params.userId) ? req.params.userId[0] : req.params.userId;

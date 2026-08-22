@@ -14,6 +14,12 @@ export const userProfiles = pgTable("user_profiles", {
   unitSystem: text("unit_system").notNull().default("metric"),           // "metric" (m, km) vs "imperial" (ft, mi)
   avatarUrl: text("avatar_url"),                         // Cloudflare R2 / S3 profile photo URL
   onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
+  benefitTier: text("benefit_tier").notNull().default("standard"), // "core_dev", "student", "beta_developer", "standard"
+  discountPercent: doublePrecision("discount_percent").notNull().default(0), // 100, 70, 40, 0
+  discountExpiresAt: timestamp("discount_expires_at"),   // null = lifetime (e.g. core_dev)
+  studentVerificationStatus: text("student_verification_status").default("none"), // "none", "pending", "approved", "rejected"
+  studentIdCardUrl: text("student_id_card_url"),
+  institutionName: text("institution_name"),
   metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
