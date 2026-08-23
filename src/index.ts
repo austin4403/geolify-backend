@@ -20,6 +20,7 @@ import swaggerRouter from "./docs/swagger";
 import tilesRouter from "./routes/tiles";
 import geologyRouter from "./routes/geology";
 import mineralsRouter from "./routes/minerals";
+import elevationRouter from "./routes/elevation";
 import { startSubscriptionSweeper } from "./services/subscriptionSweeper";
 import { startNightlyTilePrewarmCron } from "./services/tilePrewarm";
 import { startNightlyMineralSyncCron } from "./services/mineralSourcing";
@@ -93,6 +94,7 @@ app.use("/api", eventsRouter);
 app.use("/api", reportsRouter);
 app.use("/api/tiles", tilesRouter);
 app.use("/api/geology", geologyRouter);
+app.use("/api/elevation", elevationRouter);
 app.use("/api", syncRouter);
 
 // 404 Catch-All Handler

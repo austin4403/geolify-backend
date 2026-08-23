@@ -7,7 +7,7 @@
  */
 
 import { Router, Request, Response } from "express";
-import { db } from "../db";
+import { refDb } from "../db/refDb";
 import { minerals } from "../db/schema";
 import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { syncMineralDatabase } from "../services/mineralSourcing";
@@ -75,18 +75,29 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
       orderClause = desc(minerals.specificGravity);
     } else if (sortBy === "class") {
       orderClause = asc(minerals.mineralClass);
+    } else if (q) {
+      // Relevance ranking for text search: exact name match -> prefix match -> priority -> alphabetical
+      orderClause = sql`
+        CASE 
+          WHEN LOWER(${minerals.name}) = LOWER(${q}) THEN 1
+          WHEN LOWER(${minerals.name}) LIKE LOWER(${q + '%'}) THEN 2
+          ELSE 3
+        END ASC,
+        COALESCE((${minerals.metadata}->>'priority')::int, 0) DESC,
+        ${minerals.name} ASC
+      ` as any;
     }
 
     // Query Data & Count in parallel
     const [data, totalCountResult] = await Promise.all([
-      db
+      refDb
         .select()
         .from(minerals)
         .where(whereClause)
         .orderBy(orderClause)
         .limit(limit)
         .offset(offset),
-      db
+      refDb
         .select({ count: sql<number>`count(*)::int` })
         .from(minerals)
         .where(whereClause),
@@ -118,21 +129,29 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
  */
 router.get("/:idOrName", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { idOrName } = req.params;
-    const numId = parseInt(idOrName, 10);
+    const rawIdOrName = Array.isArray(req.params.idOrName)
+      ? req.params.idOrName[0]
+      : req.params.idOrName;
+
+    if (!rawIdOrName) {
+      res.status(400).json({ error: "Invalid mineral ID or name" });
+      return;
+    }
+
+    const numId = parseInt(rawIdOrName, 10);
 
     let mineral;
     if (!isNaN(numId)) {
-      [mineral] = await db
+      [mineral] = await refDb
         .select()
         .from(minerals)
         .where(eq(minerals.id, numId))
         .limit(1);
     } else {
-      [mineral] = await db
+      [mineral] = await refDb
         .select()
         .from(minerals)
-        .where(ilike(minerals.name, idOrName))
+        .where(ilike(minerals.name, rawIdOrName))
         .limit(1);
     }
 

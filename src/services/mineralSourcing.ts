@@ -8,7 +8,7 @@
  * - Macrostrat Lithology Associations
  */
 
-import { db } from "../db";
+import { refDb } from "../db/refDb";
 import { minerals, InsertMineral } from "../db/schema";
 import { eq } from "drizzle-orm";
 
@@ -970,14 +970,14 @@ export const CURATED_MINERAL_DATASET: Omit<InsertMineral, "id" | "createdAt" | "
 export async function syncMineralDatabase(): Promise<{ addedOrUpdated: number }> {
   let count = 0;
   for (const item of CURATED_MINERAL_DATASET) {
-    const [existing] = await db
+    const [existing] = await refDb
       .select({ id: minerals.id })
       .from(minerals)
       .where(eq(minerals.name, item.name))
       .limit(1);
 
     if (existing) {
-      await db
+      await refDb
         .update(minerals)
         .set({
           ...item,
@@ -985,7 +985,7 @@ export async function syncMineralDatabase(): Promise<{ addedOrUpdated: number }>
         })
         .where(eq(minerals.id, existing.id));
     } else {
-      await db.insert(minerals).values({
+      await refDb.insert(minerals).values({
         ...item,
         createdAt: new Date(),
         updatedAt: new Date(),
