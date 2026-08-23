@@ -163,7 +163,7 @@ router.get("/quote", async (req: Request, res: Response) => {
       discountAmount,
       finalPrice,
       isFreeDueToCoreDev: benefitTier === "core_dev",
-      supportedPaymentGateways: currency === "KES" ? ["mpesa", "card_paystack", "stripe"] : ["stripe", "apple_pay", "google_pay"],
+      supportedPaymentGateways: currency === "KES" ? ["mpesa", "stripe"] : ["stripe", "apple_pay", "google_pay"],
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to generate price quote: " + error.message });

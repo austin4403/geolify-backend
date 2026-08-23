@@ -42,62 +42,54 @@ if (process.env.JWKS_URI) {
  * Verify and extract JWT payload from token string
  */
 export async function verifyToken(token: string): Promise<AuthenticatedUser | null> {
-  try {
-    // 1. If JWKS URI is configured (Clerk, Supabase, Neon Auth, Firebase, etc.)
-    if (process.env.JWKS_URI && remoteJWKS) {
+  // 1. If JWKS URI is configured (Neon Auth, OIDC)
+  if (process.env.JWKS_URI && remoteJWKS) {
+    try {
       const { payload } = await jwtVerify(token, remoteJWKS, {
         issuer: process.env.JWT_ISSUER,
         audience: process.env.JWT_AUDIENCE,
       });
       const userId = (payload.sub || payload.user_id || payload.uid || payload.id) as string;
-      return {
-        userId,
-        email: payload.email as string | undefined,
-        role: (payload.role as string) || (payload.roles as string[] | undefined)?.[0],
-        ...payload,
-      };
-    }
-
-    // 2. If symmetric JWT_SECRET is configured
-    if (process.env.JWT_SECRET) {
-      const secret = new TextEncoder().encode(process.env.JWT_SECRET);
-      const { payload } = await jwtVerify(token, secret);
-      const userId = (payload.sub || payload.user_id || payload.uid || payload.id) as string;
-      return {
-        userId,
-        email: payload.email as string | undefined,
-        role: payload.role as string | undefined,
-        ...payload,
-      };
-    }
-
-    // 3. Fallback for Dev/Testing: parse JWT structure without verification if no secret is configured, or use raw token string
-    if (token.includes(".") && token.split(".").length === 3) {
-      const decoded = decodeJwt(token);
-      const userId = (decoded.sub || decoded.user_id || decoded.uid || decoded.id) as string;
       if (userId) {
         return {
           userId,
-          email: decoded.email as string | undefined,
-          role: decoded.role as string | undefined,
-          ...decoded,
+          email: payload.email as string | undefined,
+          role: (payload.role as string) || (payload.roles as string[] | undefined)?.[0],
+          ...payload,
+        };
+      }
+    } catch {
+      // Fall through to symmetric signature verification
+    }
+  }
+
+  // 2. Symmetric signature verification using JWT_SECRET
+  try {
+    const secretStr = process.env.JWT_SECRET || (process.env.NODE_ENV !== "production" ? "geoquerry_dev_jwt_secret_must_change_in_prod_12345" : "");
+    if (secretStr) {
+      const secret = new TextEncoder().encode(secretStr);
+      const { payload } = await jwtVerify(token, secret);
+      const userId = (payload.sub || payload.user_id || payload.uid || payload.id) as string;
+      if (userId) {
+        return {
+          userId,
+          email: payload.email as string | undefined,
+          role: payload.role as string | undefined,
+          ...payload,
         };
       }
     }
-
-    // Direct token string identifier fallback (e.g. test tokens)
-    return { userId: token };
-  } catch (err) {
+    return null;
+  } catch {
     return null;
   }
 }
 
 /**
- * Authentication Middleware: Extracts user identity from Bearer token, session header, or SSE query param.
+ * Authentication Middleware: Extracts and cryptographically verifies user identity from Bearer token.
  */
 export async function authenticateUser(req: Request, _res: Response, next: NextFunction) {
   try {
-    // 1. Check Authorization Bearer Header
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith("Bearer ")) {
       const token = authHeader.substring(7).trim();
@@ -109,26 +101,8 @@ export async function authenticateUser(req: Request, _res: Response, next: NextF
         }
       }
     }
-
-    // 2. Check X-User-Id header (for internal/dev/desktop integration)
-    const headerUserId = req.headers["x-user-id"] as string | undefined;
-    if (headerUserId) {
-      req.user = {
-        userId: headerUserId.trim(),
-        email: (req.headers["x-user-email"] as string)?.trim(),
-      };
-      return next();
-    }
-
-    // 3. Check query param for SSE / EventSource streams
-    const queryUserId = req.query.userId as string | undefined;
-    if (queryUserId) {
-      req.user = { userId: queryUserId.trim() };
-      return next();
-    }
-
     next();
-  } catch (error) {
+  } catch {
     next();
   }
 }
@@ -139,7 +113,7 @@ export async function authenticateUser(req: Request, _res: Response, next: NextF
 export function requireAuth(req: Request, res: Response, next: NextFunction) {
   if (!req.user || !req.user.userId) {
     res.status(401).json({
-      error: "Authentication required. Please provide a valid Authorization Bearer token or User ID.",
+      error: "Authentication required. Please provide a valid Authorization Bearer token.",
     });
     return;
   }
@@ -153,7 +127,7 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 export function requireProjectRole(minRole: "viewer" | "editor" | "owner" = "viewer") {
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const currentUserId = req.user?.userId || (req.headers["x-user-id"] as string);
+      const currentUserId = req.user?.userId;
 
       if (!currentUserId) {
         res.status(401).json({ error: "Authentication required to access project resources." });

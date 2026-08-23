@@ -2,26 +2,26 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import app from "../../src/index";
 import { verifyToken } from "../../src/middleware/auth";
-import { SignJWT } from "jose";
+import { generateToken } from "../../src/routes/auth";
 
 describe("JWT Authentication, Customer Benefits & Admin RBAC Tests", () => {
-  it("verifyToken correctly parses token payload and extracts user identity", async () => {
-    // Generate test JWT
-    const secret = new TextEncoder().encode("dev-secret-key-12345678901234567890");
-    const jwt = await new SignJWT({
-      sub: "geologist_user_99",
+  it("verifyToken correctly parses valid signed JWT and extracts user identity", async () => {
+    const token = await generateToken({
+      userId: "geologist_user_99",
       email: "jane.doe@geoquerry.com",
       role: "editor",
-    })
-      .setProtectedHeader({ alg: "HS256" })
-      .setIssuedAt()
-      .setExpirationTime("2h")
-      .sign(secret);
+    });
 
-    const user = await verifyToken(jwt);
+    const user = await verifyToken(token);
     expect(user).not.toBeNull();
     expect(user?.userId).toBe("geologist_user_99");
     expect(user?.email).toBe("jane.doe@geoquerry.com");
+  });
+
+  it("verifyToken rejects forged/unverified tokens with invalid secret", async () => {
+    const forgedToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsInJvbGUiOiJsZWFkX2FkbWluIn0.invalid_signature";
+    const user = await verifyToken(forgedToken);
+    expect(user).toBeNull();
   });
 
   it("GET /api/projects/:id/sync/pull - rejects unauthenticated requests", async () => {
@@ -43,21 +43,40 @@ describe("JWT Authentication, Customer Benefits & Admin RBAC Tests", () => {
     expect(res.body).toHaveProperty("error");
   });
 
-  it("GET /api/admin/users - rejects non-lead-dev users with 403 Forbidden", async () => {
+  it("GET /api/admin/users - rejects x-user-id header spoofing with 401 Unauthorized", async () => {
     const res = await request(app)
       .get("/api/admin/users")
-      .set("x-user-id", "regular_user_123")
-      .set("x-user-email", "geologist@commercial.com");
+      .set("x-user-id", "lead_admin_user");
+
+    expect(res.status).toBe(401);
+    expect(res.body).toHaveProperty("error");
+  });
+
+  it("GET /api/admin/users - rejects non-admin users with 403 Forbidden", async () => {
+    const regularUserToken = await generateToken({
+      userId: "regular_user_123",
+      email: "geologist@commercial.com",
+      role: "users",
+    });
+
+    const res = await request(app)
+      .get("/api/admin/users")
+      .set("Authorization", `Bearer ${regularUserToken}`);
 
     expect(res.status).toBe(403);
     expect(res.body).toHaveProperty("error");
-    expect(res.body.error).toContain("restricted exclusively to the Lead Developer");
   });
 
-  it("POST /api/admin/users/:userId/tier - rejects unauthorized non-lead-dev tier assignment", async () => {
+  it("POST /api/admin/users/:userId/tier - rejects unauthorized non-lead-admin tier assignment", async () => {
+    const regularUserToken = await generateToken({
+      userId: "regular_user_123",
+      email: "geologist@commercial.com",
+      role: "users",
+    });
+
     const res = await request(app)
       .post("/api/admin/users/target_user_456/tier")
-      .set("x-user-id", "regular_user_123")
+      .set("Authorization", `Bearer ${regularUserToken}`)
       .send({
         tier: "core_dev",
       });

@@ -13,7 +13,7 @@ const router = Router();
  */
 export async function requireLeadAdmin(req: Request, res: Response, next: NextFunction) {
   try {
-    const currentUserId = req.user?.userId || (req.headers["x-user-id"] as string);
+    const currentUserId = req.user?.userId;
     if (!currentUserId) {
       res.status(401).json({ error: "Authentication required." });
       return;
@@ -36,7 +36,8 @@ export async function requireLeadAdmin(req: Request, res: Response, next: NextFu
 
     next();
   } catch (err: any) {
-    res.status(500).json({ error: "Authorization error: " + err.message });
+    console.error("Authorization error:", err);
+    res.status(500).json({ error: "Authorization verification failed." });
   }
 }
 
@@ -48,7 +49,7 @@ export const requireLeadDev = requireLeadAdmin;
  */
 export async function requireDevOrAdmin(req: Request, res: Response, next: NextFunction) {
   try {
-    const currentUserId = req.user?.userId || (req.headers["x-user-id"] as string);
+    const currentUserId = req.user?.userId;
     if (!currentUserId) {
       res.status(401).json({ error: "Authentication required." });
       return;
@@ -75,7 +76,8 @@ export async function requireDevOrAdmin(req: Request, res: Response, next: NextF
 
     next();
   } catch (err: any) {
-    res.status(500).json({ error: "Authorization error: " + err.message });
+    console.error("Authorization error:", err);
+    res.status(500).json({ error: "Authorization verification failed." });
   }
 }
 

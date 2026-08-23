@@ -10,7 +10,10 @@ import { requireAuth } from "../middleware/auth";
 
 const router = Router();
 
-const JWT_SECRET = process.env.JWT_SECRET || "geoquerry_super_secure_jwt_secret_dev_key_2026";
+const JWT_SECRET = process.env.JWT_SECRET || (process.env.NODE_ENV !== "production" ? "geoquerry_dev_jwt_secret_must_change_in_prod_12345" : "");
+if (!JWT_SECRET && process.env.NODE_ENV === "production") {
+  throw new Error("CRITICAL SECURITY CONFIGURATION: JWT_SECRET environment variable must be set in production.");
+}
 const secretKey = new TextEncoder().encode(JWT_SECRET);
 
 // 1. Zod Validation Schemas
@@ -35,8 +38,8 @@ const loginSchema = z.object({
   password: z.string().min(1, "Password is required"),
 });
 
-// Helper: Issue standard JWT token
-async function generateToken(payload: { userId: string; email: string; role: string }) {
+// Helper: Issue standard JWT token (24-hour expiration window)
+export async function generateToken(payload: { userId: string; email: string; role: string }) {
   return await new SignJWT({
     sub: payload.userId,
     userId: payload.userId,
@@ -45,7 +48,7 @@ async function generateToken(payload: { userId: string; email: string; role: str
   })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("30d")
+    .setExpirationTime("24h")
     .sign(secretKey);
 }
 
@@ -145,7 +148,8 @@ router.post("/register", async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Registration error: " + error.message });
+    console.error("Registration error:", error);
+    res.status(500).json({ error: "Registration failed. Please verify input and try again." });
   }
 });
 
@@ -214,7 +218,8 @@ router.post("/login", async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Login error: " + error.message });
+    console.error("Login error:", error);
+    res.status(500).json({ error: "Login failed. Please check credentials and try again." });
   }
 });
 
@@ -259,7 +264,8 @@ router.get("/me", requireAuth, async (req: Request, res: Response) => {
       },
     });
   } catch (error: any) {
-    res.status(500).json({ error: "Profile fetch error: " + error.message });
+    console.error("Profile fetch error:", error);
+    res.status(500).json({ error: "Failed to retrieve user profile." });
   }
 });
 

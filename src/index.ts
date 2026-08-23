@@ -10,7 +10,6 @@ import hydrogeologyRouter from "./routes/hydrogeology";
 import uploadsRouter from "./routes/uploads";
 import eventsRouter from "./routes/events";
 import reportsRouter from "./routes/reports";
-import locationsRouter from "./routes/locations";
 import syncRouter from "./routes/sync";
 import authRouter from "./routes/auth";
 import adminRouter from "./routes/admin";
@@ -20,8 +19,10 @@ import webhooksRouter from "./routes/webhooks";
 import swaggerRouter from "./docs/swagger";
 import tilesRouter from "./routes/tiles";
 import geologyRouter from "./routes/geology";
+import mineralsRouter from "./routes/minerals";
 import { startSubscriptionSweeper } from "./services/subscriptionSweeper";
 import { startNightlyTilePrewarmCron } from "./services/tilePrewarm";
+import { startNightlyMineralSyncCron } from "./services/mineralSourcing";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
@@ -64,11 +65,11 @@ app.get("/", (_req, res) => {
       rocks: "/api/stations/:stationId/rocks",
       structures: "/api/stations/:stationId/structures",
       hydrogeology: "/api/boreholes",
+      minerals: "/api/minerals",
       sync: "/api/projects/:projectId/sync/pull",
       uploads: "/api/uploads/presigned-url",
       events: "/api/projects/:projectId/events",
       reports: "/api/projects/:projectId/export/summary",
-      locations: "/api/locations",
     },
   });
 });
@@ -86,10 +87,10 @@ app.use("/api/stations", stationsRouter);
 app.use("/api", rocksRouter);
 app.use("/api", structuresRouter);
 app.use("/api", hydrogeologyRouter);
+app.use("/api/minerals", mineralsRouter);
 app.use("/api/uploads", uploadsRouter);
 app.use("/api", eventsRouter);
 app.use("/api", reportsRouter);
-app.use("/api/locations", locationsRouter);
 app.use("/api/tiles", tilesRouter);
 app.use("/api/geology", geologyRouter);
 app.use("/api", syncRouter);
@@ -112,6 +113,9 @@ if (process.env.NODE_ENV !== "test") {
 
     // Start background nightly 00:00 EAT Tile Pre-Synthesis Cron
     startNightlyTilePrewarmCron();
+
+    // Start background nightly 00:00 EAT Mineral Sourcing & Ingestion Cron
+    startNightlyMineralSyncCron();
   });
 }
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import app from "../../src/index";
 import { sanitizeCsvField, sanitizeFileName } from "../../src/utils/sanitize";
+import { generateToken } from "../../src/routes/auth";
 
 describe("GeoQuerry AppSec & Penetration Testing Suite", () => {
   describe("1. Security Headers Audit (OWASP A05:2021 Security Misconfiguration)", () => {
@@ -109,9 +110,15 @@ describe("GeoQuerry AppSec & Penetration Testing Suite", () => {
     });
 
     it("rejects invalid/unsupported MIME types even with auth", async () => {
+      const token = await generateToken({
+        userId: "auth_user_123",
+        email: "geologist@geoquerry.com",
+        role: "users",
+      });
+
       const res = await request(app)
         .post("/api/uploads/presigned-url")
-        .set("x-user-id", "auth_user_123")
+        .set("Authorization", `Bearer ${token}`)
         .send({
           filename: "payload.exe",
           contentType: "application/x-msdownload",
@@ -125,7 +132,7 @@ describe("GeoQuerry AppSec & Penetration Testing Suite", () => {
   describe("5. Input Validation & Parameter Tampering (OWASP A03 / A04)", () => {
     it("rejects out-of-bound latitude coordinates (>90 or <-90)", async () => {
       const res = await request(app)
-        .post("/api/locations")
+        .post("/api/stations")
         .send({
           name: "Invalid North Pole",
           latitude: 145.0, // Invalid > 90
@@ -137,7 +144,7 @@ describe("GeoQuerry AppSec & Penetration Testing Suite", () => {
 
     it("rejects malformed JSON payloads without crashing", async () => {
       const res = await request(app)
-        .post("/api/locations")
+        .post("/api/stations")
         .set("Content-Type", "application/json")
         .send('{"name": "broken json", broken}');
 

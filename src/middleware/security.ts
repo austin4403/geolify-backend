@@ -31,7 +31,7 @@ export const securityHeaders = helmet({
 });
 
 /**
- * Allowed CORS Origins
+ * Allowed CORS Origins & Strict Matching
  */
 const DEFAULT_ORIGINS = [
   "http://localhost:5173",
@@ -42,18 +42,20 @@ const DEFAULT_ORIGINS = [
   "https://app.geoquerry.com",
 ];
 
+const LOCAL_ORIGIN_REGEX = /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d{1,3}\.\d{1,3}|10\.\d{1,3}\.\d{1,3}\.\d{1,3})(:\d+)?$/;
+
 export const corsMiddleware = cors({
   origin: (origin, callback) => {
-    // Allow non-browser requests where origin is undefined
+    // Allow non-browser requests where origin is undefined (e.g. server-to-server, curl, tests)
     if (!origin) {
       return callback(null, true);
     }
 
-    // In development mode, allow any localhost/127.0.0.1/local network origins
-    if (process.env.NODE_ENV !== "production" || origin.includes("localhost") || origin.includes("127.0.0.1")) {
+    // In development mode, allow all local origins and network IPs
+    if (process.env.NODE_ENV !== "production") {
       return callback(null, true);
     }
-    
+
     const envOrigins = process.env.ALLOWED_ORIGINS
       ? process.env.ALLOWED_ORIGINS.split(",").map((o) => o.trim())
       : [];
@@ -63,10 +65,10 @@ export const corsMiddleware = cors({
       return callback(null, true);
     }
 
-    return callback(new Error("CORS policy violation: origin not allowed"), false);
+    return callback(null, false);
   },
   credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
   allowedHeaders: [
     "Content-Type",
     "Authorization",
@@ -74,6 +76,8 @@ export const corsMiddleware = cors({
     "Accept",
     "x-user-id",
     "x-user-email",
+    "X-User-Id",
+    "X-User-Email",
   ],
   exposedHeaders: ["Content-Disposition"],
   maxAge: 86400, // 24 hours
@@ -91,7 +95,7 @@ export const apiLimiter = rateLimit({
     status: 429,
     error: "Too many requests from this IP, please try again after 15 minutes.",
   },
-  skip: () => process.env.NODE_ENV === "test", // Skip during automated test suites
+  skip: (req) => process.env.NODE_ENV === "test" || req.originalUrl?.startsWith("/api/tiles"),
 });
 
 /**

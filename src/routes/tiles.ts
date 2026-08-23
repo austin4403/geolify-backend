@@ -24,7 +24,7 @@ export const EXPLORATION_HOTSPOTS = [
 ];
 
 function tileToGeographic(z: number, x: number, y: number) {
-  const originShift = (2 * Math.PI * 6378137) / 2.0; // 20037508.342789244
+  const originShift = (2 * Math.PI * 6378137) / 2.0;
   const numTiles = 1 << z;
   const tileSize = (2 * originShift) / numTiles;
 
@@ -62,16 +62,84 @@ function sendTransparent(res: Response, sourceTag = "Transparent-Fallback") {
   res.end(TRANSPARENT_PNG);
 }
 
+interface WmsProxyOptions {
+  bounds?: { minLat: number; maxLat: number; minLng: number; maxLng: number };
+  minZoomForBounds?: number;
+  buildUrl: (bboxStr: string) => string;
+  sourceTag: string;
+}
+
+async function proxyWmsTile(
+  res: Response,
+  z: string,
+  x: string,
+  y: string,
+  options: WmsProxyOptions
+): Promise<void> {
+  try {
+    const cleanY = y.replace(/\.png$/, "");
+    const zNum = parseInt(z, 10);
+    const xNum = parseInt(x, 10);
+    const yNum = parseInt(cleanY, 10);
+
+    if (isNaN(zNum) || isNaN(xNum) || isNaN(yNum)) {
+      sendTransparent(res);
+      return;
+    }
+
+    const { epsg3857, bounds } = tileToGeographic(zNum, xNum, yNum);
+
+    if (options.bounds && (!options.minZoomForBounds || zNum >= options.minZoomForBounds)) {
+      if (
+        bounds.south > options.bounds.maxLat ||
+        bounds.north < options.bounds.minLat ||
+        bounds.west > options.bounds.maxLng ||
+        bounds.east < options.bounds.minLng
+      ) {
+        sendTransparent(res, `${options.sourceTag}-Out-Of-Bounds`);
+        return;
+      }
+    }
+
+    const [minX, minY, maxX, maxY] = epsg3857;
+    const bboxStr = `${minX.toFixed(2)},${minY.toFixed(2)},${maxX.toFixed(2)},${maxY.toFixed(2)}`;
+    const url = options.buildUrl(bboxStr);
+
+    const fetchRes = await fetch(url, {
+      headers: {
+        "User-Agent": "GeoQuerry-GIS/1.0 (contact@geoquerry.com)",
+        Accept: "image/png,image/*;q=0.8",
+      },
+    });
+
+    if (fetchRes.ok) {
+      const contentType = fetchRes.headers.get("content-type") || "";
+      if (contentType.includes("image") || contentType.includes("octet-stream")) {
+        const buffer = await fetchRes.arrayBuffer();
+        res.writeHead(200, {
+          "Content-Type": "image/png",
+          "Access-Control-Allow-Origin": "*",
+          "Cache-Control": "public, max-age=86400, s-maxage=604800",
+          "X-GeoQuerry-Tile-Source": options.sourceTag,
+        });
+        res.end(Buffer.from(buffer));
+        return;
+      }
+    }
+
+    sendTransparent(res, `${options.sourceTag}-Fallback`);
+  } catch {
+    sendTransparent(res);
+  }
+}
+
 // 1. Macrostrat Global Bedrock
 tilesRouter.get("/geology/:z/:x/:y", async (req: Request, res: Response): Promise<void> => {
   try {
-    const z = String(req.params.z);
-    const x = String(req.params.x);
-    const y = String(req.params.y);
-    const cleanY = y.replace(/\.png$/, "");
-
-    const zNum = parseInt(z, 10);
-    const xNum = parseInt(x, 10);
+    const { z, x, y } = req.params;
+    const cleanY = (Array.isArray(y) ? y[0] : y).replace(/\.png$/, "");
+    const zNum = parseInt(Array.isArray(z) ? z[0] : z, 10);
+    const xNum = parseInt(Array.isArray(x) ? x[0] : x, 10);
     const yNum = parseInt(cleanY, 10);
 
     if (isNaN(zNum) || isNaN(xNum) || isNaN(yNum)) {
@@ -113,195 +181,43 @@ tilesRouter.get("/geology/:z/:x/:y", async (req: Request, res: Response): Promis
     }
 
     sendTransparent(res, "Macrostrat-Fallback");
-  } catch (e) {
+  } catch {
     sendTransparent(res);
   }
 });
 
 // 2. USGS SGMC High-Resolution Geology (North America)
-tilesRouter.get("/usgs/:z/:x/:y", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const z = String(req.params.z);
-    const x = String(req.params.x);
-    const y = String(req.params.y);
-    const cleanY = y.replace(/\.png$/, "");
-
-    const zNum = parseInt(z, 10);
-    const xNum = parseInt(x, 10);
-    const yNum = parseInt(cleanY, 10);
-
-    if (isNaN(zNum) || isNaN(xNum) || isNaN(yNum)) {
-      sendTransparent(res);
-      return;
-    }
-
-    const { epsg3857, bounds } = tileToGeographic(zNum, xNum, yNum);
-
-    // Bounding Box guard
-    if (
-      bounds.south > USGS_BOUNDS.maxLat ||
-      bounds.north < USGS_BOUNDS.minLat ||
-      bounds.west > USGS_BOUNDS.maxLng ||
-      bounds.east < USGS_BOUNDS.minLng
-    ) {
-      sendTransparent(res, "USGS-Out-Of-Bounds");
-      return;
-    }
-
-    const [minX, minY, maxX, maxY] = epsg3857;
-    const bboxStr = `${minX.toFixed(2)},${minY.toFixed(2)},${maxX.toFixed(2)},${maxY.toFixed(2)}`;
-    const url = `https://mrdata.usgs.gov/services/sgmc?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bboxStr}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=SGMC_Geology&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`;
-
-    const fetchRes = await fetch(url, {
-      headers: {
-        "User-Agent": "GeoQuerry-GIS/1.0 (contact@geoquerry.com)",
-        Accept: "image/png,image/*;q=0.8",
-      },
-    });
-
-    if (fetchRes.ok) {
-      const contentType = fetchRes.headers.get("content-type") || "";
-      if (contentType.includes("image") || contentType.includes("octet-stream")) {
-        const buffer = await fetchRes.arrayBuffer();
-        res.writeHead(200, {
-          "Content-Type": "image/png",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=86400, s-maxage=604800",
-          "X-GeoQuerry-Tile-Source": "USGS-SGMC-WMS",
-        });
-        res.end(Buffer.from(buffer));
-        return;
-      }
-    }
-
-    sendTransparent(res, "USGS-Fallback");
-  } catch {
-    sendTransparent(res);
-  }
+tilesRouter.get("/usgs/:z/:x/:y", (req: Request, res: Response) => {
+  const { z, x, y } = req.params;
+  return proxyWmsTile(res, String(z), String(x), String(y), {
+    bounds: USGS_BOUNDS,
+    sourceTag: "USGS-SGMC-WMS",
+    buildUrl: (bbox) =>
+      `https://mrdata.usgs.gov/services/sgmc?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bbox}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=SGMC_Geology&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`,
+  });
 });
 
 // 3. British Geological Survey (UK)
-tilesRouter.get("/bgs/:z/:x/:y", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const z = String(req.params.z);
-    const x = String(req.params.x);
-    const y = String(req.params.y);
-    const cleanY = y.replace(/\.png$/, "");
-
-    const zNum = parseInt(z, 10);
-    const xNum = parseInt(x, 10);
-    const yNum = parseInt(cleanY, 10);
-
-    if (isNaN(zNum) || isNaN(xNum) || isNaN(yNum)) {
-      sendTransparent(res);
-      return;
-    }
-
-    const { epsg3857, bounds } = tileToGeographic(zNum, xNum, yNum);
-
-    if (
-      bounds.south > BGS_BOUNDS.maxLat ||
-      bounds.north < BGS_BOUNDS.minLat ||
-      bounds.west > BGS_BOUNDS.maxLng ||
-      bounds.east < BGS_BOUNDS.minLng
-    ) {
-      sendTransparent(res, "BGS-Out-Of-Bounds");
-      return;
-    }
-
-    const [minX, minY, maxX, maxY] = epsg3857;
-    const bboxStr = `${minX.toFixed(2)},${minY.toFixed(2)},${maxX.toFixed(2)},${maxY.toFixed(2)}`;
-    const url = `https://ogc.bgs.ac.uk/cgi-bin/BGS_Bedrock_and_Superficial_Geology/ows?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bboxStr}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=GBR_BGS_625k_BLT&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`;
-
-    const fetchRes = await fetch(url, {
-      headers: {
-        "User-Agent": "GeoQuerry-GIS/1.0 (contact@geoquerry.com)",
-        Accept: "image/png,image/*;q=0.8",
-      },
-    });
-
-    if (fetchRes.ok) {
-      const contentType = fetchRes.headers.get("content-type") || "";
-      if (contentType.includes("image") || contentType.includes("octet-stream")) {
-        const buffer = await fetchRes.arrayBuffer();
-        res.writeHead(200, {
-          "Content-Type": "image/png",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=86400, s-maxage=604800",
-          "X-GeoQuerry-Tile-Source": "BGS-625k-Bedrock-WMS",
-        });
-        res.end(Buffer.from(buffer));
-        return;
-      }
-    }
-
-    sendTransparent(res, "BGS-Fallback");
-  } catch {
-    sendTransparent(res);
-  }
+tilesRouter.get("/bgs/:z/:x/:y", (req: Request, res: Response) => {
+  const { z, x, y } = req.params;
+  return proxyWmsTile(res, String(z), String(x), String(y), {
+    bounds: BGS_BOUNDS,
+    sourceTag: "BGS-625k-Bedrock-WMS",
+    buildUrl: (bbox) =>
+      `https://ogc.bgs.ac.uk/cgi-bin/BGS_Bedrock_and_Superficial_Geology/ows?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bbox}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=GBR_BGS_625k_BLT&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`,
+  });
 });
 
 // 4. OneGeology / BRGM (Europe)
-tilesRouter.get("/onegeology/:z/:x/:y", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const z = String(req.params.z);
-    const x = String(req.params.x);
-    const y = String(req.params.y);
-    const cleanY = y.replace(/\.png$/, "");
-
-    const zNum = parseInt(z, 10);
-    const xNum = parseInt(x, 10);
-    const yNum = parseInt(cleanY, 10);
-
-    if (isNaN(zNum) || isNaN(xNum) || isNaN(yNum)) {
-      sendTransparent(res);
-      return;
-    }
-
-    const { epsg3857, bounds } = tileToGeographic(zNum, xNum, yNum);
-
-    if (zNum >= 4) {
-      if (
-        bounds.south > ONEGEOLOGY_BOUNDS.maxLat ||
-        bounds.north < ONEGEOLOGY_BOUNDS.minLat ||
-        bounds.west > ONEGEOLOGY_BOUNDS.maxLng ||
-        bounds.east < ONEGEOLOGY_BOUNDS.minLng
-      ) {
-        sendTransparent(res, "OneGeology-Out-Of-Bounds");
-        return;
-      }
-    }
-
-    const [minX, minY, maxX, maxY] = epsg3857;
-    const bboxStr = `${minX.toFixed(2)},${minY.toFixed(2)},${maxX.toFixed(2)},${maxY.toFixed(2)}`;
-    const url = `https://geoservices.brgm.fr/geologie?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bboxStr}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=GEOLOGIE&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`;
-
-    const fetchRes = await fetch(url, {
-      headers: {
-        "User-Agent": "GeoQuerry-GIS/1.0 (contact@geoquerry.com)",
-        Accept: "image/png,image/*;q=0.8",
-      },
-    });
-
-    if (fetchRes.ok) {
-      const contentType = fetchRes.headers.get("content-type") || "";
-      if (contentType.includes("image") || contentType.includes("octet-stream")) {
-        const buffer = await fetchRes.arrayBuffer();
-        res.writeHead(200, {
-          "Content-Type": "image/png",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "public, max-age=86400, s-maxage=604800",
-          "X-GeoQuerry-Tile-Source": "OneGeology-WMS",
-        });
-        res.end(Buffer.from(buffer));
-        return;
-      }
-    }
-
-    sendTransparent(res, "OneGeology-Fallback");
-  } catch {
-    sendTransparent(res);
-  }
+tilesRouter.get("/onegeology/:z/:x/:y", (req: Request, res: Response) => {
+  const { z, x, y } = req.params;
+  return proxyWmsTile(res, String(z), String(x), String(y), {
+    bounds: ONEGEOLOGY_BOUNDS,
+    minZoomForBounds: 4,
+    sourceTag: "OneGeology-WMS",
+    buildUrl: (bbox) =>
+      `https://geoservices.brgm.fr/geologie?SERVICE=WMS&VERSION=1.3.0&REQUEST=GetMap&BBOX=${bbox}&CRS=EPSG:3857&WIDTH=256&HEIGHT=256&LAYERS=GEOLOGIE&STYLES=&FORMAT=image/png&TRANSPARENT=TRUE`,
+  });
 });
 
 // 5. Pre-warm / Pre-synthesis trigger endpoint
@@ -310,7 +226,6 @@ tilesRouter.all("/prewarm", async (_req: Request, res: Response): Promise<void> 
     const startTime = Date.now();
     let totalPrimed = 0;
 
-    // Macro pyramids
     const promises: Promise<any>[] = [];
     for (let z = 0; z <= 2; z++) {
       const numTiles = Math.pow(2, z);

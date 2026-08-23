@@ -23,7 +23,7 @@ export const userProfiles = pgTable("user_profiles", {
   subscriptionTier: text("subscription_tier").notNull().default("free"), // "free", "pro", "premium", "enterprise"
   subscriptionStatus: text("subscription_status").notNull().default("active"), // "active", "canceled", "past_due", "trialing"
   subscriptionExpiresAt: timestamp("subscription_expires_at"), // null for active free/lifetime
-  paymentProvider: text("payment_provider"),             // "stripe", "mpesa", "paystack", "manual", null
+  paymentProvider: text("payment_provider"),             // "stripe", "mpesa", "manual", null
   paymentCustomerId: text("payment_customer_id"),       // Stripe customer ID or M-Pesa phone/account
   studentVerificationStatus: text("student_verification_status").default("none"), // "none", "pending", "approved", "rejected"
   studentIdCardUrl: text("student_id_card_url"),
@@ -236,26 +236,11 @@ export const liveLocations = pgTable("live_locations", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-// 9. Saved / Reference Locations (Points of Interest, Outcrops, Base Camps)
-export const locations = pgTable("locations", {
-  id: serial("id").primaryKey(),
-  clientUuid: uuid("client_uuid"),                       // Offline client-generated UUID
-  name: text("name").notNull(),
-  description: text("description"),
-  category: text("category").notNull().default("general"),
-  latitude: doublePrecision("latitude").notNull(),
-  longitude: doublePrecision("longitude").notNull(),
-  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
-  deletedAt: timestamp("deleted_at"),                    // Soft-delete marker for offline sync
-  createdAt: timestamp("created_at").defaultNow().notNull(),
-  updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
-
-// 10. Payment Transactions (Stripe & M-Pesa Audit Ledger)
+// 9. Payment Transactions (Stripe & M-Pesa Audit Ledger)
 export const paymentTransactions = pgTable("payment_transactions", {
   id: serial("id").primaryKey(),
   userId: text("user_id").notNull(),
-  provider: text("provider").notNull(),                  // "stripe", "mpesa", "paystack"
+  provider: text("provider").notNull(),                  // "stripe", "mpesa"
   transactionRef: text("transaction_ref").notNull(),     // Stripe Session ID / CheckoutRequestID
   mpesaReceiptNumber: text("mpesa_receipt_number"),      // e.g. "QK87JH2938"
   planId: text("plan_id").notNull(),                     // "pro", "premium", "enterprise"
@@ -344,3 +329,37 @@ export const promoCodes = pgTable("promo_codes", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+// 12. Minerals & Physical Mineralogy Species
+export const minerals = pgTable("minerals", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  formula: text("formula"),                              // Chemical formula (e.g. "SiO2", "FeS2", "CaCO3")
+  crystalSystem: text("crystal_system"),                // "Isometric", "Hexagonal", "Tetragonal", "Orthorhombic", "Monoclinic", "Triclinic", "Amorphous"
+  mineralClass: text("mineral_class"),                  // "Silicates", "Oxides", "Sulfides", "Carbonates", "Native Elements", "Halides", "Sulfates", "Phosphates"
+  mohsHardnessMin: doublePrecision("mohs_hardness_min"), // Min Mohs hardness (e.g. 7.0)
+  mohsHardnessMax: doublePrecision("mohs_hardness_max"), // Max Mohs hardness (e.g. 7.5)
+  specificGravity: doublePrecision("specific_gravity"),  // Density / specific gravity (e.g. 2.65)
+  luster: text("luster"),                                // "Vitreous", "Metallic", "Submetallic", "Adamantine", "Pearly", "Silky", "Dull"
+  color: text("color"),                                  // Typical visual coloration
+  streak: text("streak"),                                // Color of powdered mineral
+  cleavage: text("cleavage"),                            // Cleavage quality and directions (e.g. "Perfect {001}")
+  fracture: text("fracture"),                            // "Conchoidal", "Uneven", "Splintery", "Hackly"
+  opticalProperties: text("optical_properties"),         // "Biaxial (+)", "Uniaxial (-)", "Isotropic"
+  imaStatus: text("ima_status").default("Approved"),     // "Approved", "Grandfathered", "Questionable"
+  tenacity: text("tenacity"),                            // "Brittle", "Malleable", "Sectile", "Flexible", "Elastic"
+  diaphaneity: text("diaphaneity"),                      // "Transparent", "Translucent", "Opaque"
+  diagnosticFeatures: text("diagnostic_features"),       // Key field tests (e.g. "Effervesces in cold HCl, rhombohedral cleavage")
+  commonAssociatedRocks: text("common_associated_rocks"), // "Granite, Pegmatite, Sandstone, Hydrothermal veins"
+  industrialUses: text("industrial_uses"),               // "Semiconductors, Glass manufacturing, Refractory, Ore of iron"
+  occurrence: text("occurrence"),                        // Geological environments
+  imageUrl: text("image_url"),                           // Specimen image URL
+  rruffId: text("rruff_id"),                             // Reference ID in RRUFF project
+  mindatId: integer("mindat_id"),                        // Reference ID in Mindat database
+  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type Mineral = typeof minerals.$inferSelect;
+export type InsertMineral = typeof minerals.$inferInsert;

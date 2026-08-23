@@ -2,7 +2,7 @@ import { Router, Request, Response } from "express";
 import { db } from "../db";
 import { stations, rockSamples, structuralMeasurements, boreholes } from "../db/schema";
 import { requireAuth, requireProjectRole } from "../middleware/auth";
-import { eq, and, gt, inArray, isNull, or } from "drizzle-orm";
+import { eq, and, gt, inArray, isNull } from "drizzle-orm";
 import { z } from "zod";
 import { broadcastProjectEvent } from "./events";
 
@@ -97,6 +97,50 @@ const syncPushPayloadSchema = z.object({
 });
 
 /**
+ * Generic single-table Last-Write-Wins sync helper
+ */
+async function syncEntity<T extends { id?: number; clientUuid: string; updatedAt: string; deletedAt?: string | null }>(
+  table: any,
+  items: T[],
+  prepareData: (item: T, existing?: any) => Record<string, any>,
+  onSaved?: (item: T, id: number) => void
+): Promise<number> {
+  let processed = 0;
+  for (const item of items) {
+    const [existing] = await db
+      .select()
+      .from(table)
+      .where(item.clientUuid ? eq(table.clientUuid, item.clientUuid) : item.id ? eq(table.id, item.id) : eq(table.id, -1))
+      .limit(1);
+
+    const clientUpdatedAt = new Date(item.updatedAt);
+    const deletedAt = item.deletedAt ? new Date(item.deletedAt) : null;
+
+    if (existing) {
+      if (clientUpdatedAt >= existing.updatedAt) {
+        const updateData = prepareData(item, existing);
+        await db
+          .update(table)
+          .set({ ...updateData, deletedAt, updatedAt: new Date() })
+          .where(eq(table.id, existing.id));
+        onSaved?.(item, existing.id);
+      }
+    } else {
+      const insertData = prepareData(item);
+      const [inserted] = await db
+        .insert(table)
+        .values({ ...insertData, clientUuid: item.clientUuid, deletedAt, createdAt: clientUpdatedAt, updatedAt: new Date() })
+        .returning({ id: table.id });
+      if (inserted) {
+        onSaved?.(item, inserted.id);
+      }
+    }
+    processed++;
+  }
+  return processed;
+}
+
+/**
  * GET /api/projects/:projectId/sync/pull?since=ISOString
  * Returns all entities updated or soft-deleted since timestamp
  */
@@ -115,18 +159,11 @@ router.get(
         return;
       }
 
-      // 1. Fetch updated/created stations in this project
       const changedStations = await db
         .select()
         .from(stations)
-        .where(
-          and(
-            eq(stations.projectId, projectId),
-            gt(stations.updatedAt, sinceDate)
-          )
-        );
+        .where(and(eq(stations.projectId, projectId), gt(stations.updatedAt, sinceDate)));
 
-      // Get all station IDs in project for cascading children query
       const allProjectStations = await db
         .select({ id: stations.id, clientUuid: stations.clientUuid })
         .from(stations)
@@ -138,39 +175,21 @@ router.get(
       let changedStructures: any[] = [];
 
       if (stationIds.length > 0) {
-        // 2. Fetch updated rock samples
         changedRocks = await db
           .select()
           .from(rockSamples)
-          .where(
-            and(
-              inArray(rockSamples.stationId, stationIds),
-              gt(rockSamples.updatedAt, sinceDate)
-            )
-          );
+          .where(and(inArray(rockSamples.stationId, stationIds), gt(rockSamples.updatedAt, sinceDate)));
 
-        // 3. Fetch updated structural measurements
         changedStructures = await db
           .select()
           .from(structuralMeasurements)
-          .where(
-            and(
-              inArray(structuralMeasurements.stationId, stationIds),
-              gt(structuralMeasurements.updatedAt, sinceDate)
-            )
-          );
+          .where(and(inArray(structuralMeasurements.stationId, stationIds), gt(structuralMeasurements.updatedAt, sinceDate)));
       }
 
-      // 4. Fetch updated boreholes
       const changedBoreholes = await db
         .select()
         .from(boreholes)
-        .where(
-          and(
-            eq(boreholes.projectId, projectId),
-            gt(boreholes.updatedAt, sinceDate)
-          )
-        );
+        .where(and(eq(boreholes.projectId, projectId), gt(boreholes.updatedAt, sinceDate)));
 
       res.json({
         syncedAt: new Date().toISOString(),
@@ -198,304 +217,100 @@ router.post(
     try {
       const projectId = parseInt(req.params.projectId as string, 10);
       const parsed = syncPushPayloadSchema.parse(req.body);
-
       const stationIdMap = new Map<string, number>();
 
-      // Preload existing stations in project into memory map
-      const existingStations = await db
-        .select()
-        .from(stations)
-        .where(eq(stations.projectId, projectId));
-
-      for (const s of existingStations) {
-        if (s.clientUuid) {
-          stationIdMap.set(s.clientUuid, s.id);
-        }
-      }
-
-      let processedStations = 0;
-      let processedRocks = 0;
-      let processedStructures = 0;
-      let processedBoreholes = 0;
-
       // 1. Process Stations
-      for (const st of parsed.stations) {
-        const existing = existingStations.find(
-          (s) => s.clientUuid === st.clientUuid || (st.id && s.id === st.id)
-        );
+      const processedStations = await syncEntity(
+        stations,
+        parsed.stations,
+        (st, existing) => ({
+          projectId,
+          code: st.code,
+          name: st.name,
+          latitude: st.latitude,
+          longitude: st.longitude,
+          elevation: st.elevation ?? existing?.elevation,
+          gpsAccuracy: st.gpsAccuracy ?? existing?.gpsAccuracy,
+          vegetation: st.vegetation ?? existing?.vegetation,
+          soilDescription: st.soilDescription ?? existing?.soilDescription,
+          landmarks: st.landmarks ?? existing?.landmarks,
+          outcropExposure: st.outcropExposure ?? existing?.outcropExposure,
+          weathering: st.weathering ?? existing?.weathering,
+          photoUrls: existing ? Array.from(new Set([...(existing.photoUrls || []), ...(st.photoUrls || [])])) : (st.photoUrls || []),
+          metadata: { ...(existing?.metadata || {}), ...(st.metadata || {}) },
+        }),
+        (st, id) => stationIdMap.set(st.clientUuid, id)
+      );
 
-        const clientUpdatedAt = new Date(st.updatedAt);
-        const deletedAt = st.deletedAt ? new Date(st.deletedAt) : null;
-
-        if (existing) {
-          // Last-Write-Wins: update if incoming timestamp is >= server
-          if (clientUpdatedAt >= existing.updatedAt) {
-            // Non-destructive photo and metadata merging across field teammates
-            const mergedPhotos = Array.from(
-              new Set([...(existing.photoUrls || []), ...(st.photoUrls || [])])
-            );
-            const mergedMetadata = { ...(existing.metadata || {}), ...(st.metadata || {}) };
-
-            await db
-              .update(stations)
-              .set({
-                code: st.code,
-                name: st.name,
-                latitude: st.latitude,
-                longitude: st.longitude,
-                elevation: st.elevation !== undefined ? st.elevation : existing.elevation,
-                gpsAccuracy: st.gpsAccuracy !== undefined ? st.gpsAccuracy : existing.gpsAccuracy,
-                vegetation: st.vegetation !== undefined ? st.vegetation : existing.vegetation,
-                soilDescription: st.soilDescription !== undefined ? st.soilDescription : existing.soilDescription,
-                landmarks: st.landmarks !== undefined ? st.landmarks : existing.landmarks,
-                outcropExposure: st.outcropExposure !== undefined ? st.outcropExposure : existing.outcropExposure,
-                weathering: st.weathering !== undefined ? st.weathering : existing.weathering,
-                photoUrls: mergedPhotos,
-                metadata: mergedMetadata,
-                deletedAt,
-                updatedAt: new Date(),
-              })
-              .where(eq(stations.id, existing.id));
-            stationIdMap.set(st.clientUuid, existing.id);
-          }
-        } else {
-          // Insert new station
-          const [inserted] = await db
-            .insert(stations)
-            .values({
-              projectId,
-              clientUuid: st.clientUuid,
-              code: st.code,
-              name: st.name,
-              latitude: st.latitude,
-              longitude: st.longitude,
-              elevation: st.elevation,
-              gpsAccuracy: st.gpsAccuracy,
-              vegetation: st.vegetation,
-              soilDescription: st.soilDescription,
-              landmarks: st.landmarks,
-              outcropExposure: st.outcropExposure,
-              weathering: st.weathering,
-              photoUrls: st.photoUrls || [],
-              metadata: st.metadata || {},
-              deletedAt,
-              createdAt: clientUpdatedAt,
-              updatedAt: new Date(),
-            })
-            .returning({ id: stations.id });
-          if (inserted) {
-            stationIdMap.set(st.clientUuid, inserted.id);
-          }
-        }
-        processedStations++;
+      // Preload remaining stations for clientUuid resolution
+      const allStations = await db.select({ id: stations.id, clientUuid: stations.clientUuid }).from(stations).where(eq(stations.projectId, projectId));
+      for (const s of allStations) {
+        if (s.clientUuid && !stationIdMap.has(s.clientUuid)) stationIdMap.set(s.clientUuid, s.id);
       }
 
       // 2. Process Rock Samples
-      for (const rk of parsed.rockSamples) {
-        const resolvedStationId =
-          rk.stationId || (rk.stationClientUuid ? stationIdMap.get(rk.stationClientUuid) : undefined);
-
-        if (!resolvedStationId) {
-          continue; // Cannot link rock without resolved station
-        }
-
-        const [existingRock] = await db
-          .select()
-          .from(rockSamples)
-          .where(
-            rk.clientUuid
-              ? eq(rockSamples.clientUuid, rk.clientUuid)
-              : rk.id
-              ? eq(rockSamples.id, rk.id)
-              : eq(rockSamples.id, -1)
-          )
-          .limit(1);
-
-        const clientUpdatedAt = new Date(rk.updatedAt);
-        const deletedAt = rk.deletedAt ? new Date(rk.deletedAt) : null;
-
-        if (existingRock) {
-          if (clientUpdatedAt >= existingRock.updatedAt) {
-            const mergedRockPhotos = Array.from(
-              new Set([...(existingRock.photoUrls || []), ...(rk.photoUrls || [])])
-            );
-
-            await db
-              .update(rockSamples)
-              .set({
-                stationId: resolvedStationId,
-                sampleBagId: rk.sampleBagId,
-                probableRock: rk.probableRock,
-                grainSize: rk.grainSize,
-                texture: rk.texture,
-                maficPercent: rk.maficPercent,
-                felsicPercent: rk.felsicPercent,
-                maficMinerals: rk.maficMinerals || [],
-                felsicMinerals: rk.felsicMinerals || [],
-                photoUrls: mergedRockPhotos,
-                notes: rk.notes,
-                deletedAt,
-                updatedAt: new Date(),
-              })
-              .where(eq(rockSamples.id, existingRock.id));
-          }
-        } else {
-          await db.insert(rockSamples).values({
-            stationId: resolvedStationId,
-            clientUuid: rk.clientUuid,
-            sampleBagId: rk.sampleBagId,
-            probableRock: rk.probableRock,
-            grainSize: rk.grainSize,
-            texture: rk.texture,
-            maficPercent: rk.maficPercent,
-            felsicPercent: rk.felsicPercent,
-            maficMinerals: rk.maficMinerals || [],
-            felsicMinerals: rk.felsicMinerals || [],
-            photoUrls: rk.photoUrls || [],
-            notes: rk.notes,
-            deletedAt,
-            createdAt: clientUpdatedAt,
-            updatedAt: new Date(),
-          });
-        }
-        processedRocks++;
-      }
+      const validRocks = parsed.rockSamples.filter((rk) => rk.stationId || (rk.stationClientUuid && stationIdMap.has(rk.stationClientUuid)));
+      const processedRocks = await syncEntity(
+        rockSamples,
+        validRocks,
+        (rk, existing) => ({
+          stationId: rk.stationId || (rk.stationClientUuid ? stationIdMap.get(rk.stationClientUuid) : undefined),
+          sampleBagId: rk.sampleBagId,
+          probableRock: rk.probableRock,
+          grainSize: rk.grainSize,
+          texture: rk.texture,
+          maficPercent: rk.maficPercent,
+          felsicPercent: rk.felsicPercent,
+          maficMinerals: rk.maficMinerals || [],
+          felsicMinerals: rk.felsicMinerals || [],
+          photoUrls: existing ? Array.from(new Set([...(existing.photoUrls || []), ...(rk.photoUrls || [])])) : (rk.photoUrls || []),
+          notes: rk.notes,
+        })
+      );
 
       // 3. Process Structural Measurements
-      for (const st of parsed.structuralMeasurements) {
-        const resolvedStationId =
-          st.stationId || (st.stationClientUuid ? stationIdMap.get(st.stationClientUuid) : undefined);
-
-        if (!resolvedStationId) {
-          continue;
-        }
-
-        const [existingStructure] = await db
-          .select({ id: structuralMeasurements.id, updatedAt: structuralMeasurements.updatedAt })
-          .from(structuralMeasurements)
-          .where(
-            st.clientUuid
-              ? eq(structuralMeasurements.clientUuid, st.clientUuid)
-              : st.id
-              ? eq(structuralMeasurements.id, st.id)
-              : eq(structuralMeasurements.id, -1)
-          )
-          .limit(1);
-
-        const clientUpdatedAt = new Date(st.updatedAt);
-        const deletedAt = st.deletedAt ? new Date(st.deletedAt) : null;
-
-        if (existingStructure) {
-          if (clientUpdatedAt >= existingStructure.updatedAt) {
-            await db
-              .update(structuralMeasurements)
-              .set({
-                stationId: resolvedStationId,
-                structureType: st.structureType,
-                strike: st.strike,
-                dipAngle: st.dipAngle,
-                dipDirection: st.dipDirection,
-                foldType: st.foldType,
-                plunge: st.plunge,
-                trend: st.trend,
-                notes: st.notes,
-                deletedAt,
-                updatedAt: new Date(),
-              })
-              .where(eq(structuralMeasurements.id, existingStructure.id));
-          }
-        } else {
-          await db.insert(structuralMeasurements).values({
-            stationId: resolvedStationId,
-            clientUuid: st.clientUuid,
-            structureType: st.structureType,
-            strike: st.strike,
-            dipAngle: st.dipAngle,
-            dipDirection: st.dipDirection,
-            foldType: st.foldType,
-            plunge: st.plunge,
-            trend: st.trend,
-            notes: st.notes,
-            deletedAt,
-            createdAt: clientUpdatedAt,
-            updatedAt: new Date(),
-          });
-        }
-        processedStructures++;
-      }
+      const validStructures = parsed.structuralMeasurements.filter((st) => st.stationId || (st.stationClientUuid && stationIdMap.has(st.stationClientUuid)));
+      const processedStructures = await syncEntity(
+        structuralMeasurements,
+        validStructures,
+        (st) => ({
+          stationId: st.stationId || (st.stationClientUuid ? stationIdMap.get(st.stationClientUuid) : undefined),
+          structureType: st.structureType,
+          strike: st.strike,
+          dipAngle: st.dipAngle,
+          dipDirection: st.dipDirection,
+          foldType: st.foldType,
+          plunge: st.plunge,
+          trend: st.trend,
+          notes: st.notes,
+        })
+      );
 
       // 4. Process Boreholes
-      for (const bh of parsed.boreholes) {
-        const [existingBorehole] = await db
-          .select({ id: boreholes.id, updatedAt: boreholes.updatedAt })
-          .from(boreholes)
-          .where(
-            bh.clientUuid
-              ? eq(boreholes.clientUuid, bh.clientUuid)
-              : bh.id
-              ? eq(boreholes.id, bh.id)
-              : eq(boreholes.id, -1)
-          )
-          .limit(1);
-
-        const clientUpdatedAt = new Date(bh.updatedAt);
-        const deletedAt = bh.deletedAt ? new Date(bh.deletedAt) : null;
-
-        if (existingBorehole) {
-          if (clientUpdatedAt >= existingBorehole.updatedAt) {
-            await db
-              .update(boreholes)
-              .set({
-                boreholeNumber: bh.boreholeNumber,
-                name: bh.name,
-                latitude: bh.latitude,
-                longitude: bh.longitude,
-                elevation: bh.elevation,
-                totalDepth: bh.totalDepth,
-                staticWaterLevel: bh.staticWaterLevel,
-                dynamicWaterLevel: bh.dynamicWaterLevel,
-                dischargeRate: bh.dischargeRate,
-                aquiferType: bh.aquiferType,
-                aquiferDepths: bh.aquiferDepths || [],
-                lithologyLogs: bh.lithologyLogs || [],
-                waterQuality: bh.waterQuality || {},
-                vesSoundings: bh.vesSoundings || [],
-                pumpingTestLogs: bh.pumpingTestLogs || [],
-                photoUrls: bh.photoUrls || [],
-                notes: bh.notes,
-                deletedAt,
-                updatedAt: new Date(),
-              })
-              .where(eq(boreholes.id, existingBorehole.id));
-          }
-        } else {
-          await db.insert(boreholes).values({
-            projectId,
-            clientUuid: bh.clientUuid,
-            boreholeNumber: bh.boreholeNumber,
-            name: bh.name,
-            latitude: bh.latitude,
-            longitude: bh.longitude,
-            elevation: bh.elevation,
-            totalDepth: bh.totalDepth,
-            staticWaterLevel: bh.staticWaterLevel,
-            dynamicWaterLevel: bh.dynamicWaterLevel,
-            dischargeRate: bh.dischargeRate,
-            aquiferType: bh.aquiferType,
-            aquiferDepths: bh.aquiferDepths || [],
-            lithologyLogs: bh.lithologyLogs || [],
-            waterQuality: bh.waterQuality || {},
-            vesSoundings: bh.vesSoundings || [],
-            pumpingTestLogs: bh.pumpingTestLogs || [],
-            photoUrls: bh.photoUrls || [],
-            notes: bh.notes,
-            deletedAt,
-            createdAt: clientUpdatedAt,
-            updatedAt: new Date(),
-          });
-        }
-        processedBoreholes++;
-      }
+      const processedBoreholes = await syncEntity(
+        boreholes,
+        parsed.boreholes,
+        (bh) => ({
+          projectId,
+          boreholeNumber: bh.boreholeNumber,
+          name: bh.name,
+          latitude: bh.latitude,
+          longitude: bh.longitude,
+          elevation: bh.elevation,
+          totalDepth: bh.totalDepth,
+          staticWaterLevel: bh.staticWaterLevel,
+          dynamicWaterLevel: bh.dynamicWaterLevel,
+          dischargeRate: bh.dischargeRate,
+          aquiferType: bh.aquiferType,
+          aquiferDepths: bh.aquiferDepths || [],
+          lithologyLogs: bh.lithologyLogs || [],
+          waterQuality: bh.waterQuality || {},
+          vesSoundings: bh.vesSoundings || [],
+          pumpingTestLogs: bh.pumpingTestLogs || [],
+          photoUrls: bh.photoUrls || [],
+          notes: bh.notes,
+        })
+      );
 
       // Broadcast sync event to all active collaborators via SSE
       broadcastProjectEvent(projectId, "project:sync", {
@@ -540,17 +355,6 @@ router.get(
   async (req: Request, res: Response) => {
     try {
       const projectId = parseInt(req.params.projectId as string, 10);
-
-      const [stationCount] = await db
-        .select({ id: stations.id })
-        .from(stations)
-        .where(and(eq(stations.projectId, projectId), isNull(stations.deletedAt)));
-
-      const [boreholeCount] = await db
-        .select({ id: boreholes.id })
-        .from(boreholes)
-        .where(and(eq(boreholes.projectId, projectId), isNull(boreholes.deletedAt)));
-
       res.json({
         projectId,
         serverTime: new Date().toISOString(),

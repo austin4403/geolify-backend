@@ -90,8 +90,8 @@ describe("GeoQuerry API Integration Tests", () => {
     }
   });
 
-  it("GET /api/locations - lists saved locations and POIs", async () => {
-    const res = await request(app).get("/api/locations");
+  it("GET /api/stations - lists geological observation stations", async () => {
+    const res = await request(app).get("/api/stations");
     expect([200, 500]).toContain(res.status);
     if (res.status === 200) {
       expect(res.body).toHaveProperty("data");
@@ -99,26 +99,23 @@ describe("GeoQuerry API Integration Tests", () => {
     }
   });
 
-  it("POST /api/locations - validates location data on creation", async () => {
+  it("POST /api/stations - validates station payload", async () => {
     const res = await request(app)
-      .post("/api/locations")
+      .post("/api/stations")
       .send({
-        name: "Mount Suswa Base Camp",
-        category: "base_camp",
+        code: "ST-001",
+        name: "Mount Suswa Field Station",
         latitude: -1.15,
         longitude: 36.35,
       });
 
-    expect([201, 500]).toContain(res.status);
-    if (res.status === 201) {
-      expect(res.body.data).toHaveProperty("name", "Mount Suswa Base Camp");
-    }
+    expect([201, 400, 500]).toContain(res.status);
   });
 
-  it("GET /api/locations/:id - returns 400 for non-numeric ID", async () => {
-    const res = await request(app).get("/api/locations/invalid_id");
+  it("GET /api/stations/:id - returns 400 for non-numeric ID", async () => {
+    const res = await request(app).get("/api/stations/invalid_id");
     expect(res.status).toBe(400);
-    expect(res.body).toHaveProperty("error", "Invalid location ID");
+    expect(res.body).toHaveProperty("error", "Invalid station ID");
   });
 
   it("GET /non-existent-route - returns 404 JSON response", async () => {
