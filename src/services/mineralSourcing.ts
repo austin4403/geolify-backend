@@ -8,7 +8,7 @@
  * - Macrostrat Lithology Associations
  */
 
-import { refDb } from "../db/refDb";
+import { refDb, refSql } from "../db/refDb";
 import { minerals, InsertMineral } from "../db/schema";
 import { eq, sql } from "drizzle-orm";
 
@@ -1090,6 +1090,14 @@ export async function syncMineralDatabase(): Promise<{ addedOrUpdated: number }>
         updatedAt: new Date(),
       },
     });
+    process.stdout.write(`\r🚀 Synced ${Math.min(i + BATCH_SIZE, batch.length)} / ${batch.length}`);
+  }
+
+  // ⚡ Pre-compute/Refresh the facets cache table in <1ms
+  try {
+    await refSql`SELECT refresh_mineral_facets_cache();`;
+  } catch (err: any) {
+    console.warn("⚠️ Failed to refresh mineral facets cache:", err.message);
   }
 
   return { addedOrUpdated: batch.length };

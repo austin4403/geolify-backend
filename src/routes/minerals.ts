@@ -102,35 +102,38 @@ export function buildMineralFilterConditions(params: MineralFilterParams): SQL[]
 
 /**
  * GET /api/minerals/facets
- * Dynamic facet discovery for hydrating frontend filter dropdowns & search pills
+ * Sub-millisecond pre-computed facet discovery from mineral_facets_cache
  */
 router.get("/facets", async (_req: Request, res: Response, next: NextFunction) => {
   try {
-    const [classesRes, systemsRes, localitiesRes, rocksRes, usesRes] = await Promise.all([
-      refDb
-        .select({ val: minerals.mineralClass })
-        .from(minerals)
-        .where(isNotNull(minerals.mineralClass)),
-      refDb
-        .select({ val: minerals.crystalSystem })
-        .from(minerals)
-        .where(isNotNull(minerals.crystalSystem)),
-      refSql`SELECT DISTINCT unnest(localities) as val FROM minerals WHERE localities IS NOT NULL ORDER BY val LIMIT 100`,
-      refSql`SELECT DISTINCT unnest(associated_rocks) as val FROM minerals WHERE associated_rocks IS NOT NULL ORDER BY val LIMIT 100`,
-      refSql`SELECT DISTINCT unnest(industrial_uses) as val FROM minerals WHERE industrial_uses IS NOT NULL ORDER BY val LIMIT 100`,
-    ]);
+    const cached = await refSql`
+      SELECT classes, crystal_systems, localities, associated_rocks, industrial_uses 
+      FROM mineral_facets_cache 
+      WHERE id = 1
+    `;
 
-    const distinctClasses = [...new Set(classesRes.map((c) => c.val).filter(Boolean))].sort();
-    const distinctSystems = [...new Set(systemsRes.map((c) => c.val).filter(Boolean))].sort();
+    if (cached && (cached as any[])[0]) {
+      const row = (cached as any[])[0];
+      return res.json({
+        success: true,
+        data: {
+          classes: row.classes || [],
+          crystalSystems: row.crystal_systems || [],
+          localities: row.localities || [],
+          associatedRocks: row.associated_rocks || [],
+          industrialUses: row.industrial_uses || [],
+        },
+      });
+    }
 
-    res.json({
+    return res.json({
       success: true,
       data: {
-        classes: distinctClasses,
-        crystalSystems: distinctSystems,
-        localities: (localitiesRes as any[]).map((l) => l.val).filter(Boolean),
-        associatedRocks: (rocksRes as any[]).map((r) => r.val).filter(Boolean),
-        industrialUses: (usesRes as any[]).map((u) => u.val).filter(Boolean),
+        classes: [],
+        crystalSystems: [],
+        localities: [],
+        associatedRocks: [],
+        industrialUses: [],
       },
     });
   } catch (error) {

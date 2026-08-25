@@ -106,7 +106,47 @@ async function setupRefDb() {
   // GIN pg_trgm index for fuzzy matching
   await refSql`CREATE INDEX IF NOT EXISTS idx_minerals_name_trgm ON minerals USING gin (name gin_trgm_ops);`;
 
-  console.log("✅ Reference database minerals table and GIN indexes successfully verified!");
+  // 5. Create pre-aggregated Facets Cache table and refresh function
+  await refSql`
+    CREATE TABLE IF NOT EXISTS mineral_facets_cache (
+      id INT PRIMARY KEY DEFAULT 1,
+      classes TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      crystal_systems TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      localities TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      associated_rocks TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      industrial_uses TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW() NOT NULL
+    );
+  `;
+
+  await refSql`
+    CREATE OR REPLACE FUNCTION refresh_mineral_facets_cache() RETURNS VOID AS $$
+    BEGIN
+      INSERT INTO mineral_facets_cache (id, classes, crystal_systems, localities, associated_rocks, industrial_uses, updated_at)
+      VALUES (
+        1,
+        (SELECT COALESCE(array_agg(DISTINCT mineral_class ORDER BY mineral_class), ARRAY[]::TEXT[]) FROM minerals WHERE mineral_class IS NOT NULL),
+        (SELECT COALESCE(array_agg(DISTINCT crystal_system ORDER BY crystal_system), ARRAY[]::TEXT[]) FROM minerals WHERE crystal_system IS NOT NULL),
+        (SELECT COALESCE(array_agg(DISTINCT val ORDER BY val), ARRAY[]::TEXT[]) FROM (SELECT unnest(localities) AS val FROM minerals WHERE localities IS NOT NULL) sub),
+        (SELECT COALESCE(array_agg(DISTINCT val ORDER BY val), ARRAY[]::TEXT[]) FROM (SELECT unnest(associated_rocks) AS val FROM minerals WHERE associated_rocks IS NOT NULL) sub),
+        (SELECT COALESCE(array_agg(DISTINCT val ORDER BY val), ARRAY[]::TEXT[]) FROM (SELECT unnest(industrial_uses) AS val FROM minerals WHERE industrial_uses IS NOT NULL) sub),
+        NOW()
+      )
+      ON CONFLICT (id) DO UPDATE SET
+        classes = EXCLUDED.classes,
+        crystal_systems = EXCLUDED.crystal_systems,
+        localities = EXCLUDED.localities,
+        associated_rocks = EXCLUDED.associated_rocks,
+        industrial_uses = EXCLUDED.industrial_uses,
+        updated_at = NOW();
+    END;
+    $$ LANGUAGE plpgsql;
+  `;
+
+  // Refresh facets cache immediately
+  await refSql`SELECT refresh_mineral_facets_cache();`;
+
+  console.log("✅ Reference database minerals table, GIN indexes, and pre-computed facets cache successfully verified!");
 }
 
 setupRefDb()
