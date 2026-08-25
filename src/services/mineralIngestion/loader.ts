@@ -4,16 +4,33 @@ import { minerals, InsertMineral } from "../../db/schema";
 import { ExtractedMineral } from "./wikipedia.extractor";
 import { CURATED_MINERAL_DATASET } from "../mineralSourcing";
 
+function sanitizeStringArray(val: unknown): string[] {
+  if (Array.isArray(val)) {
+    return val.map(String).map((s) => s.trim()).filter(Boolean);
+  }
+  if (typeof val === "string" && val.trim()) {
+    return val.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
 export async function loadMinerals(extracted: ExtractedMineral[]) {
   console.log("💾 Merging and Loading into Reference Database...");
 
   const mergedMap = new Map<string, InsertMineral>();
 
   // 1. Seed Curated Dataset (Curated takes priority)
-  for (const item of CURATED_MINERAL_DATASET) {
+  for (const rawItem of CURATED_MINERAL_DATASET) {
+    const item = rawItem as any;
     const key = item.name.toLowerCase().trim();
     mergedMap.set(key, {
       ...item,
+      synonyms: sanitizeStringArray(item.synonyms),
+      localities: sanitizeStringArray(item.localities),
+      associatedRocks: sanitizeStringArray(item.associatedRocks || item.commonAssociatedRocks),
+      industrialUses: sanitizeStringArray(item.industrialUses),
+      ramanSpectra: Array.isArray(item.ramanSpectra) ? item.ramanSpectra : [],
+      structuredLocalities: Array.isArray(item.structuredLocalities) ? item.structuredLocalities : [],
       metadata: {
         strunzClassification: item.metadata?.strunzClassification || null,
         imaCode: item.metadata?.imaCode || "Approved",
@@ -28,7 +45,15 @@ export async function loadMinerals(extracted: ExtractedMineral[]) {
   for (const item of extracted) {
     const key = item.name.toLowerCase().trim();
     if (!mergedMap.has(key)) {
-      mergedMap.set(key, item);
+      mergedMap.set(key, {
+        ...item,
+        synonyms: sanitizeStringArray(item.synonyms),
+        localities: sanitizeStringArray(item.localities),
+        associatedRocks: sanitizeStringArray(item.associatedRocks),
+        industrialUses: sanitizeStringArray(item.industrialUses),
+        ramanSpectra: item.ramanSpectra || [],
+        structuredLocalities: item.structuredLocalities || [],
+      });
     } else {
       const existing = mergedMap.get(key)!;
       if (!existing.mindatId && item.mindatId) {
@@ -37,13 +62,19 @@ export async function loadMinerals(extracted: ExtractedMineral[]) {
       if (!existing.formula && item.formula) {
         existing.formula = item.formula;
       }
+
+      // In-memory array union for batch prep
+      existing.synonyms = Array.from(new Set([...(existing.synonyms || []), ...(item.synonyms || [])]));
+      existing.localities = Array.from(new Set([...(existing.localities || []), ...(item.localities || [])]));
+      existing.associatedRocks = Array.from(new Set([...(existing.associatedRocks || []), ...(item.associatedRocks || [])]));
+      existing.industrialUses = Array.from(new Set([...(existing.industrialUses || []), ...(item.industrialUses || [])]));
     }
   }
 
   const finalBatch = Array.from(mergedMap.values());
   console.log(`📦 Total unique mineral species ready for database: ${finalBatch.length}`);
 
-  // 3. Upsert using Drizzle ORM with COALESCE to preserve rich attributes
+  // 3. Upsert using Drizzle ORM with Atomic Array Unions
   const BATCH_SIZE = 250;
   for (let i = 0; i < finalBatch.length; i += BATCH_SIZE) {
     const chunk = finalBatch.slice(i, i + BATCH_SIZE);
@@ -67,13 +98,22 @@ export async function loadMinerals(extracted: ExtractedMineral[]) {
         tenacity: sql`COALESCE(excluded.tenacity, ${minerals.tenacity})`,
         diaphaneity: sql`COALESCE(excluded.diaphaneity, ${minerals.diaphaneity})`,
         diagnosticFeatures: sql`COALESCE(excluded.diagnostic_features, ${minerals.diagnosticFeatures})`,
-        commonAssociatedRocks: sql`COALESCE(excluded.common_associated_rocks, ${minerals.commonAssociatedRocks})`,
-        industrialUses: sql`COALESCE(excluded.industrial_uses, ${minerals.industrialUses})`,
         occurrence: sql`COALESCE(excluded.occurrence, ${minerals.occurrence})`,
         imageUrl: sql`COALESCE(excluded.image_url, ${minerals.imageUrl})`,
         rruffId: sql`COALESCE(excluded.rruff_id, ${minerals.rruffId})`,
         mindatId: sql`COALESCE(excluded.mindat_id, ${minerals.mindatId})`,
-        // 💡 ARCHITECTURE: Deep merge JSONB metadata preserving keys from prior pipelines (e.g. RRUFF/Mindat)
+
+        // ⚡ ATOMIC ARRAY UNION: Unnests existing and incoming arrays with double COALESCE
+        synonyms: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.synonyms}, ARRAY[]::text[]) || COALESCE(excluded.synonyms, ARRAY[]::text[]))))`,
+        localities: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.localities}, ARRAY[]::text[]) || COALESCE(excluded.localities, ARRAY[]::text[]))))`,
+        associatedRocks: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.associatedRocks}, ARRAY[]::text[]) || COALESCE(excluded.associated_rocks, ARRAY[]::text[]))))`,
+        industrialUses: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.industrialUses}, ARRAY[]::text[]) || COALESCE(excluded.industrial_uses, ARRAY[]::text[]))))`,
+
+        // 📦 JSONB Deep Payloads
+        ramanSpectra: sql`COALESCE(excluded.raman_spectra, ${minerals.ramanSpectra})`,
+        structuredLocalities: sql`COALESCE(excluded.structured_localities, ${minerals.structuredLocalities})`,
+
+        // 🏷️ Flat Metadata Non-Destructive Merge
         metadata: sql`COALESCE(${minerals.metadata}, '{}'::jsonb) || jsonb_strip_nulls(excluded.metadata)`,
         updatedAt: new Date(),
       },

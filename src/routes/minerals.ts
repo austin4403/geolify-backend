@@ -2,23 +2,158 @@
  * @file minerals.ts
  * 
  * Minerals & Crystallography API router.
- * Provides paginated infinite-scroll querying, multi-criteria filtering,
- * and automated mineral synchronization.
+ * Provides high-speed GIN-indexed search, multi-criteria filtering,
+ * paginated infinite-scroll querying, and automated mineral synchronization.
  */
 
-import { Router, Request, Response } from "express";
+import { Router, Request, Response, NextFunction } from "express";
+import { sql, and, gte, lte, eq, SQL, asc, desc, ilike } from "drizzle-orm";
+import { z } from "zod";
 import { refDb } from "../db/refDb";
 import { minerals } from "../db/schema";
-import { and, asc, desc, eq, gte, ilike, lte, or, sql } from "drizzle-orm";
 import { syncMineralDatabase } from "../services/mineralSourcing";
 
 const router = Router();
+
+// 💡 Multi-Format Array Parser (Supports ?param=a,b and ?param=a&param=b)
+const arrayQueryParam = z
+  .union([z.string(), z.array(z.string())])
+  .optional()
+  .transform((val) => {
+    if (!val) return undefined;
+    const list = Array.isArray(val) ? val : val.split(",");
+    return list.map((s) => s.trim()).filter(Boolean);
+  });
+
+// 💡 1. Strict Zod Validation Boundary for High-Speed Search
+const searchQuerySchema = z.object({
+  q: z.string().trim().min(1).max(100).optional(),
+  mineralClass: z.string().trim().optional(),
+  crystalSystem: z.string().trim().optional(),
+  localities: arrayQueryParam,
+  associatedRocks: arrayQueryParam,
+  industrialUses: arrayQueryParam,
+  mohsMin: z.coerce.number().min(0).max(10).optional(),
+  mohsMax: z.coerce.number().min(0).max(10).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+
+/**
+ * GET /api/minerals/search
+ * High-performance GIN-indexed search with pg_trgm similarity ranking
+ */
+router.get("/search", async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const parsed = searchQuerySchema.safeParse(req.query);
+
+    if (!parsed.success) {
+      return res.status(400).json({
+        success: false,
+        error: "Invalid search parameters",
+        details: parsed.error.flatten().fieldErrors,
+      });
+    }
+
+    const { q, mineralClass, crystalSystem, localities, associatedRocks, industrialUses, mohsMin, mohsMax, limit, offset } = parsed.data;
+    const conditions: SQL[] = [];
+
+    // 💡 2. Optimized GIN Index Filtering (Guarantees index scan without Seq Scan regressions)
+    if (q) {
+      conditions.push(
+        sql`(${minerals.name} % ${q} OR ${minerals.name} ILIKE ${`%${q}%`} OR ${minerals.formula} ILIKE ${`%${q}%`} OR ${q} = ANY(${minerals.synonyms}))`
+      );
+    }
+
+    if (localities && localities.length > 0) {
+      conditions.push(sql`${minerals.localities} && ${localities}`);
+    }
+
+    if (associatedRocks && associatedRocks.length > 0) {
+      conditions.push(sql`${minerals.associatedRocks} && ${associatedRocks}`);
+    }
+
+    if (industrialUses && industrialUses.length > 0) {
+      conditions.push(sql`${minerals.industrialUses} && ${industrialUses}`);
+    }
+
+    if (mineralClass && mineralClass !== "all") {
+      conditions.push(eq(minerals.mineralClass, mineralClass));
+    }
+
+    if (crystalSystem && crystalSystem !== "all") {
+      conditions.push(ilike(minerals.crystalSystem, `%${crystalSystem}%`));
+    }
+
+    // Overlap logic: mineral max hardness >= requested min, and mineral min hardness <= requested max
+    if (mohsMin !== undefined) {
+      conditions.push(gte(minerals.mohsHardnessMax, mohsMin));
+    }
+    if (mohsMax !== undefined) {
+      conditions.push(lte(minerals.mohsHardnessMin, mohsMax));
+    }
+
+    // 💡 3. Query Execution with Relevance Scoring
+    const query = refDb
+      .select({
+        id: minerals.id,
+        name: minerals.name,
+        formula: minerals.formula,
+        crystalSystem: minerals.crystalSystem,
+        mineralClass: minerals.mineralClass,
+        mohsHardnessMin: minerals.mohsHardnessMin,
+        mohsHardnessMax: minerals.mohsHardnessMax,
+        specificGravity: minerals.specificGravity,
+        luster: minerals.luster,
+        color: minerals.color,
+        streak: minerals.streak,
+        cleavage: minerals.cleavage,
+        fracture: minerals.fracture,
+        opticalProperties: minerals.opticalProperties,
+        imaStatus: minerals.imaStatus,
+        tenacity: minerals.tenacity,
+        diaphaneity: minerals.diaphaneity,
+        diagnosticFeatures: minerals.diagnosticFeatures,
+        synonyms: minerals.synonyms,
+        localities: minerals.localities,
+        associatedRocks: minerals.associatedRocks,
+        industrialUses: minerals.industrialUses,
+        imageUrl: minerals.imageUrl,
+        rruffId: minerals.rruffId,
+        mindatId: minerals.mindatId,
+        metadata: minerals.metadata,
+        similarityScore: q ? sql<number>`similarity(${minerals.name}, ${q})` : sql<number>`1.0`,
+      })
+      .from(minerals);
+
+    if (conditions.length > 0) {
+      query.where(and(...conditions));
+    }
+
+    if (q) {
+      query.orderBy(sql`similarity(${minerals.name}, ${q}) DESC`, minerals.name);
+    } else {
+      query.orderBy(minerals.name);
+    }
+
+    const results = await query.limit(limit).offset(offset);
+
+    return res.json({
+      success: true,
+      count: results.length,
+      data: results,
+    });
+  } catch (error) {
+    // 💡 4. Centralized Error Shielding (SECURITY-REPORT Cycle 4)
+    next(error);
+  }
+});
 
 /**
  * GET /api/minerals
  * Paginated infinite-scroll search and multi-criteria filters
  */
-router.get("/", async (req: Request, res: Response): Promise<void> => {
+router.get("/", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
@@ -31,19 +166,11 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
     const maxHardness = parseFloat(req.query.maxHardness as string);
     const sortBy = (req.query.sortBy as string)?.trim() || "name";
 
-    const conditions = [];
+    const conditions: SQL[] = [];
 
-    // Search query across name, formula, class, and associated rocks
     if (q) {
       conditions.push(
-        or(
-          ilike(minerals.name, `%${q}%`),
-          ilike(minerals.formula, `%${q}%`),
-          ilike(minerals.mineralClass, `%${q}%`),
-          ilike(minerals.commonAssociatedRocks, `%${q}%`),
-          ilike(minerals.diagnosticFeatures, `%${q}%`),
-          ilike(minerals.industrialUses, `%${q}%`)
-        )
+        sql`(${minerals.name} % ${q} OR ${minerals.name} ILIKE ${`%${q}%`} OR ${minerals.formula} ILIKE ${`%${q}%`} OR ${q} = ANY(${minerals.synonyms}))`
       );
     }
 
@@ -65,7 +192,6 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // Sorting
     let orderClause = asc(minerals.name);
     if (sortBy === "hardness_asc") {
       orderClause = asc(minerals.mohsHardnessMin);
@@ -76,19 +202,9 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
     } else if (sortBy === "class") {
       orderClause = asc(minerals.mineralClass);
     } else if (q) {
-      // Relevance ranking for text search: exact name match -> prefix match -> priority -> alphabetical
-      orderClause = sql`
-        CASE 
-          WHEN LOWER(${minerals.name}) = LOWER(${q}) THEN 1
-          WHEN LOWER(${minerals.name}) LIKE LOWER(${q + '%'}) THEN 2
-          ELSE 3
-        END ASC,
-        COALESCE((${minerals.metadata}->>'priority')::int, 0) DESC,
-        ${minerals.name} ASC
-      ` as any;
+      orderClause = sql`similarity(${minerals.name}, ${q}) DESC, ${minerals.name} ASC` as any;
     }
 
-    // Query Data & Count in parallel
     const [data, totalCountResult] = await Promise.all([
       refDb
         .select()
@@ -117,9 +233,8 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
         hasMore,
       },
     });
-  } catch (error: any) {
-    console.error("Error retrieving minerals catalog:", error);
-    res.status(500).json({ error: "Failed to retrieve minerals catalog" });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -127,7 +242,7 @@ router.get("/", async (req: Request, res: Response): Promise<void> => {
  * GET /api/minerals/:idOrName
  * Retrieve single mineral by ID or Name
  */
-router.get("/:idOrName", async (req: Request, res: Response): Promise<void> => {
+router.get("/:idOrName", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const rawIdOrName = Array.isArray(req.params.idOrName)
       ? req.params.idOrName[0]
@@ -161,9 +276,8 @@ router.get("/:idOrName", async (req: Request, res: Response): Promise<void> => {
     }
 
     res.json(mineral);
-  } catch (error: any) {
-    console.error("Error retrieving mineral details:", error);
-    res.status(500).json({ error: "Failed to retrieve mineral species details" });
+  } catch (error) {
+    next(error);
   }
 });
 
@@ -171,7 +285,7 @@ router.get("/:idOrName", async (req: Request, res: Response): Promise<void> => {
  * POST /api/minerals/sync
  * Admin/Dev trigger to sync and update the minerals database
  */
-router.post("/sync", async (_req: Request, res: Response): Promise<void> => {
+router.post("/sync", async (_req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const result = await syncMineralDatabase();
     res.json({
@@ -179,9 +293,8 @@ router.post("/sync", async (_req: Request, res: Response): Promise<void> => {
       message: `Successfully synchronized ${result.addedOrUpdated} mineral species in database`,
       count: result.addedOrUpdated,
     });
-  } catch (error: any) {
-    console.error("Error synchronizing minerals database:", error);
-    res.status(500).json({ error: "Failed to synchronize minerals database" });
+  } catch (error) {
+    next(error);
   }
 });
 

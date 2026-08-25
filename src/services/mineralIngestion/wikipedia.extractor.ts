@@ -90,6 +90,8 @@ async function fetchWikitext(pageName: string, retries = 3): Promise<string> {
   return "";
 }
 
+import { RamanSpectrum, StructuredLocality } from "../../types/minerals";
+
 export interface ExtractedMineral {
   name: string;
   formula: string | null;
@@ -108,8 +110,12 @@ export interface ExtractedMineral {
   tenacity: string | null;
   diaphaneity: string | null;
   diagnosticFeatures: string | null;
-  commonAssociatedRocks: string | null;
-  industrialUses: string | null;
+  synonyms: string[];
+  localities: string[];
+  associatedRocks: string[];
+  industrialUses: string[];
+  ramanSpectra: RamanSpectrum[];
+  structuredLocalities: StructuredLocality[];
   occurrence: string | null;
   imageUrl: string | null;
   rruffId: string | null;
@@ -170,8 +176,12 @@ export async function extractFromWikipedia(): Promise<ExtractedMineral[]> {
         tenacity: null,
         diaphaneity: null,
         diagnosticFeatures: formula ? `Chemical Formula / IUPAC: ${formula}` : null,
-        commonAssociatedRocks: null,
-        industrialUses: null,
+        synonyms: [],
+        localities: [],
+        associatedRocks: [],
+        industrialUses: [],
+        ramanSpectra: [],
+        structuredLocalities: [],
         occurrence: null,
         imageUrl: null,
         rruffId: null,

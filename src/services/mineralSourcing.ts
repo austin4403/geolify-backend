@@ -12,7 +12,39 @@ import { refDb } from "../db/refDb";
 import { minerals, InsertMineral } from "../db/schema";
 import { eq } from "drizzle-orm";
 
-export const CURATED_MINERAL_DATASET: Omit<InsertMineral, "id" | "createdAt" | "updatedAt">[] = [
+interface RawCuratedMineral {
+  name: string;
+  formula?: string | null;
+  crystalSystem?: string | null;
+  mineralClass?: string | null;
+  mohsHardnessMin?: number | null;
+  mohsHardnessMax?: number | null;
+  specificGravity?: number | null;
+  luster?: string | null;
+  color?: string | null;
+  streak?: string | null;
+  cleavage?: string | null;
+  fracture?: string | null;
+  opticalProperties?: string | null;
+  imaStatus?: any;
+  tenacity?: string | null;
+  diaphaneity?: string | null;
+  diagnosticFeatures?: string | null;
+  commonAssociatedRocks?: string | string[] | null;
+  industrialUses?: string | string[] | null;
+  synonyms?: string[];
+  localities?: string[];
+  associatedRocks?: string[];
+  ramanSpectra?: any[];
+  structuredLocalities?: any[];
+  occurrence?: string | null;
+  imageUrl?: string | null;
+  rruffId?: string | null;
+  mindatId?: number | null;
+  metadata?: any;
+}
+
+const RAW_CURATED_MINERAL_DATASET: RawCuratedMineral[] = [
   // --- NATIVE ELEMENTS ---
   {
     name: "Diamond",
@@ -963,6 +995,51 @@ export const CURATED_MINERAL_DATASET: Omit<InsertMineral, "id" | "createdAt" | "
     rruffId: "R040002",
   },
 ];
+
+function splitCsvValues(val: unknown): string[] {
+  if (Array.isArray(val)) return val.map(String).map((s) => s.trim()).filter(Boolean);
+  if (typeof val === "string" && val.trim()) {
+    return val.split(",").map((s) => s.trim()).filter(Boolean);
+  }
+  return [];
+}
+
+export const CURATED_MINERAL_DATASET: Omit<InsertMineral, "id" | "createdAt" | "updatedAt">[] = RAW_CURATED_MINERAL_DATASET.map((item) => ({
+  name: item.name,
+  formula: item.formula || null,
+  crystalSystem: item.crystalSystem || null,
+  mineralClass: item.mineralClass || null,
+  mohsHardnessMin: item.mohsHardnessMin ?? null,
+  mohsHardnessMax: item.mohsHardnessMax ?? null,
+  specificGravity: item.specificGravity ?? null,
+  luster: item.luster || null,
+  color: item.color || null,
+  streak: item.streak || null,
+  cleavage: item.cleavage || null,
+  fracture: item.fracture || null,
+  opticalProperties: item.opticalProperties || null,
+  imaStatus: item.imaStatus || "Approved",
+  tenacity: item.tenacity || null,
+  diaphaneity: item.diaphaneity || null,
+  diagnosticFeatures: item.diagnosticFeatures || null,
+  synonyms: splitCsvValues(item.synonyms),
+  localities: splitCsvValues(item.localities),
+  associatedRocks: splitCsvValues(item.associatedRocks || item.commonAssociatedRocks),
+  industrialUses: splitCsvValues(item.industrialUses),
+  ramanSpectra: item.ramanSpectra || [],
+  structuredLocalities: item.structuredLocalities || [],
+  occurrence: item.occurrence || null,
+  imageUrl: item.imageUrl || null,
+  rruffId: item.rruffId || null,
+  mindatId: item.mindatId ?? null,
+  metadata: item.metadata || {
+    strunzClassification: null,
+    imaCode: "Approved",
+    isCurated: true,
+    priority: 100,
+    source: "Geoquerry Curated Mineralogy Reference",
+  },
+}));
 
 /**
  * Upserts the curated mineral dataset into PostgreSQL

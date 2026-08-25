@@ -1,6 +1,6 @@
-import { pgTable, text, serial, timestamp, doublePrecision, jsonb, integer, boolean, uuid } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
-import type { MineralMetadata } from "../types/minerals";
+import { pgTable, text, serial, timestamp, doublePrecision, jsonb, integer, boolean, uuid, index } from "drizzle-orm/pg-core";
+import { relations, sql } from "drizzle-orm";
+import type { MineralMetadata, RamanSpectrum, StructuredLocality } from "../types/minerals";
 
 // 0. User Profiles & Onboarding (Linked to Neon Auth / OIDC)
 export const userProfiles = pgTable("user_profiles", {
@@ -335,7 +335,7 @@ export const promoCodes = pgTable("promo_codes", {
 export const minerals = pgTable("minerals", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
-  formula: text("formula"),                              // Chemical formula (e.g. "SiO2", "FeS2", "CaCO3")
+  formula: text("formula"),                              // Plain-text sanitized formula (e.g. "SiO2", "FeS2", "CaCO3")
   crystalSystem: text("crystal_system"),                // "Isometric", "Hexagonal", "Tetragonal", "Orthorhombic", "Monoclinic", "Triclinic", "Amorphous"
   mineralClass: text("mineral_class"),                  // "Silicates", "Oxides", "Sulfides", "Carbonates", "Native Elements", "Halides", "Sulfates", "Phosphates"
   mohsHardnessMin: doublePrecision("mohs_hardness_min"), // Min Mohs hardness (e.g. 7.0)
@@ -347,12 +347,22 @@ export const minerals = pgTable("minerals", {
   cleavage: text("cleavage"),                            // Cleavage quality and directions (e.g. "Perfect {001}")
   fracture: text("fracture"),                            // "Conchoidal", "Uneven", "Splintery", "Hackly"
   opticalProperties: text("optical_properties"),         // "Biaxial (+)", "Uniaxial (-)", "Isotropic"
-  imaStatus: text("ima_status").default("Approved"),     // "Approved", "Grandfathered", "Questionable"
+  imaStatus: text("ima_status").default("Approved"),     // "Approved", "Grandfathered", "Discredited", "Questionable", "Unclassified"
   tenacity: text("tenacity"),                            // "Brittle", "Malleable", "Sectile", "Flexible", "Elastic"
   diaphaneity: text("diaphaneity"),                      // "Transparent", "Translucent", "Opaque"
   diagnosticFeatures: text("diagnostic_features"),       // Key field tests (e.g. "Effervesces in cold HCl, rhombohedral cleavage")
-  commonAssociatedRocks: text("common_associated_rocks"), // "Granite, Pegmatite, Sandstone, Hydrothermal veins"
-  industrialUses: text("industrial_uses"),               // "Semiconductors, Glass manufacturing, Refractory, Ore of iron"
+  
+  // ⚡ 1. Native Search Arrays (GIN Indexed)
+  synonyms: text("synonyms").array().default(sql`ARRAY[]::text[]`),
+  localities: text("localities").array().default(sql`ARRAY[]::text[]`),
+  associatedRocks: text("associated_rocks").array().default(sql`ARRAY[]::text[]`),
+  industrialUses: text("industrial_uses").array().default(sql`ARRAY[]::text[]`),
+
+  // 📦 2. Rich Deep Payloads
+  ramanSpectra: jsonb("raman_spectra").$type<RamanSpectrum[]>().default([]),
+  structuredLocalities: jsonb("structured_localities").$type<StructuredLocality[]>().default([]),
+
+  // 🏷️ 3. Flat Metadata & Reference IDs
   occurrence: text("occurrence"),                        // Geological environments
   imageUrl: text("image_url"),                           // Specimen image URL
   rruffId: text("rruff_id"),                             // Reference ID in RRUFF project
@@ -366,7 +376,13 @@ export const minerals = pgTable("minerals", {
   }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  localitiesGinIdx: index("idx_minerals_localities_gin").using("gin", table.localities),
+  synonymsGinIdx: index("idx_minerals_synonyms_gin").using("gin", table.synonyms),
+  associatedRocksGinIdx: index("idx_minerals_associated_rocks_gin").using("gin", table.associatedRocks),
+  industrialUsesGinIdx: index("idx_minerals_industrial_uses_gin").using("gin", table.industrialUses),
+  nameTrgmIdx: index("idx_minerals_name_trgm").using("gin", sql`${table.name} gin_trgm_ops`),
+}));
 
 export type Mineral = typeof minerals.$inferSelect;
 export type InsertMineral = typeof minerals.$inferInsert;
