@@ -3,26 +3,29 @@
  * 
  * Minerals & Crystallography API router.
  * Provides high-speed GIN-indexed search, multi-criteria filtering,
- * paginated infinite-scroll querying, and automated mineral synchronization.
+ * dynamic facet discovery, paginated infinite-scroll querying,
+ * and automated mineral synchronization.
  */
 
 import { Router, Request, Response, NextFunction } from "express";
-import { sql, and, gte, lte, eq, SQL, asc, desc, ilike } from "drizzle-orm";
+import { sql, and, gte, lte, eq, SQL, asc, desc, ilike, isNotNull } from "drizzle-orm";
 import { z } from "zod";
-import { refDb } from "../db/refDb";
+import { refDb, refSql } from "../db/refDb";
 import { minerals } from "../db/schema";
 import { syncMineralDatabase } from "../services/mineralSourcing";
 
 const router = Router();
 
-// 💡 Multi-Format Array Parser (Supports ?param=a,b and ?param=a&param=b)
+// 💡 Multi-Format Array Parser: Preserves internal commas in array elements (e.g. "Franklin, NJ")
 const arrayQueryParam = z
   .union([z.string(), z.array(z.string())])
   .optional()
   .transform((val) => {
     if (!val) return undefined;
-    const list = Array.isArray(val) ? val : val.split(",");
-    return list.map((s) => s.trim()).filter(Boolean);
+    if (Array.isArray(val)) {
+      return val.map((s) => s.trim()).filter(Boolean);
+    }
+    return val.split(",").map((s) => s.trim()).filter(Boolean);
   });
 
 // 💡 1. Strict Zod Validation Boundary for High-Speed Search
@@ -36,6 +39,7 @@ const searchQuerySchema = z.object({
   mohsMin: z.coerce.number().min(0).max(10).optional(),
   mohsMax: z.coerce.number().min(0).max(10).optional(),
   sortBy: z.enum(["name", "hardness_asc", "hardness_desc", "gravity", "class"]).default("name"),
+  view: z.enum(["lite", "full"]).default("full"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
   page: z.coerce.number().int().min(1).default(1),
@@ -97,6 +101,44 @@ export function buildMineralFilterConditions(params: MineralFilterParams): SQL[]
 }
 
 /**
+ * GET /api/minerals/facets
+ * Dynamic facet discovery for hydrating frontend filter dropdowns & search pills
+ */
+router.get("/facets", async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const [classesRes, systemsRes, localitiesRes, rocksRes, usesRes] = await Promise.all([
+      refDb
+        .select({ val: minerals.mineralClass })
+        .from(minerals)
+        .where(isNotNull(minerals.mineralClass)),
+      refDb
+        .select({ val: minerals.crystalSystem })
+        .from(minerals)
+        .where(isNotNull(minerals.crystalSystem)),
+      refSql`SELECT DISTINCT unnest(localities) as val FROM minerals WHERE localities IS NOT NULL ORDER BY val LIMIT 100`,
+      refSql`SELECT DISTINCT unnest(associated_rocks) as val FROM minerals WHERE associated_rocks IS NOT NULL ORDER BY val LIMIT 100`,
+      refSql`SELECT DISTINCT unnest(industrial_uses) as val FROM minerals WHERE industrial_uses IS NOT NULL ORDER BY val LIMIT 100`,
+    ]);
+
+    const distinctClasses = [...new Set(classesRes.map((c) => c.val).filter(Boolean))].sort();
+    const distinctSystems = [...new Set(systemsRes.map((c) => c.val).filter(Boolean))].sort();
+
+    res.json({
+      success: true,
+      data: {
+        classes: distinctClasses,
+        crystalSystems: distinctSystems,
+        localities: (localitiesRes as any[]).map((l) => l.val).filter(Boolean),
+        associatedRocks: (rocksRes as any[]).map((r) => r.val).filter(Boolean),
+        industrialUses: (usesRes as any[]).map((u) => u.val).filter(Boolean),
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
  * GET /api/minerals/search
  * High-performance GIN-indexed search with pg_trgm similarity ranking
  */
@@ -112,7 +154,7 @@ router.get("/search", async (req: Request, res: Response, next: NextFunction) =>
       });
     }
 
-    const { q, mineralClass, crystalSystem, localities, associatedRocks, industrialUses, mohsMin, mohsMax, limit, offset } = parsed.data;
+    const { q, mineralClass, crystalSystem, localities, associatedRocks, industrialUses, mohsMin, mohsMax, view, limit, offset } = parsed.data;
     const conditions = buildMineralFilterConditions({
       q,
       mineralClass,
@@ -124,37 +166,60 @@ router.get("/search", async (req: Request, res: Response, next: NextFunction) =>
       mohsMax,
     });
 
-    const query = refDb
-      .select({
-        id: minerals.id,
-        name: minerals.name,
-        formula: minerals.formula,
-        crystalSystem: minerals.crystalSystem,
-        mineralClass: minerals.mineralClass,
-        mohsHardnessMin: minerals.mohsHardnessMin,
-        mohsHardnessMax: minerals.mohsHardnessMax,
-        specificGravity: minerals.specificGravity,
-        luster: minerals.luster,
-        color: minerals.color,
-        streak: minerals.streak,
-        cleavage: minerals.cleavage,
-        fracture: minerals.fracture,
-        opticalProperties: minerals.opticalProperties,
-        imaStatus: minerals.imaStatus,
-        tenacity: minerals.tenacity,
-        diaphaneity: minerals.diaphaneity,
-        diagnosticFeatures: minerals.diagnosticFeatures,
-        synonyms: minerals.synonyms,
-        localities: minerals.localities,
-        associatedRocks: minerals.associatedRocks,
-        industrialUses: minerals.industrialUses,
-        imageUrl: minerals.imageUrl,
-        rruffId: minerals.rruffId,
-        mindatId: minerals.mindatId,
-        metadata: minerals.metadata,
-        similarityScore: q ? sql<number>`similarity(${minerals.name}, ${q})` : sql<number>`1.0`,
-      })
-      .from(minerals);
+    const isLiteView = view === "lite";
+
+    const query = isLiteView
+      ? refDb
+          .select({
+            id: minerals.id,
+            name: minerals.name,
+            formula: minerals.formula,
+            mineralClass: minerals.mineralClass,
+            crystalSystem: minerals.crystalSystem,
+            mohsHardnessMin: minerals.mohsHardnessMin,
+            mohsHardnessMax: minerals.mohsHardnessMax,
+            specificGravity: minerals.specificGravity,
+            color: minerals.color,
+            imageUrl: minerals.imageUrl,
+            imaStatus: minerals.imaStatus,
+            localities: minerals.localities,
+            associatedRocks: minerals.associatedRocks,
+            similarityScore: q ? sql<number>`similarity(${minerals.name}, ${q})` : sql<number>`1.0`,
+          })
+          .from(minerals)
+      : refDb
+          .select({
+            id: minerals.id,
+            name: minerals.name,
+            formula: minerals.formula,
+            crystalSystem: minerals.crystalSystem,
+            mineralClass: minerals.mineralClass,
+            mohsHardnessMin: minerals.mohsHardnessMin,
+            mohsHardnessMax: minerals.mohsHardnessMax,
+            specificGravity: minerals.specificGravity,
+            luster: minerals.luster,
+            color: minerals.color,
+            streak: minerals.streak,
+            cleavage: minerals.cleavage,
+            fracture: minerals.fracture,
+            opticalProperties: minerals.opticalProperties,
+            imaStatus: minerals.imaStatus,
+            tenacity: minerals.tenacity,
+            diaphaneity: minerals.diaphaneity,
+            diagnosticFeatures: minerals.diagnosticFeatures,
+            synonyms: minerals.synonyms,
+            localities: minerals.localities,
+            associatedRocks: minerals.associatedRocks,
+            industrialUses: minerals.industrialUses,
+            imageUrl: minerals.imageUrl,
+            rruffId: minerals.rruffId,
+            mindatId: minerals.mindatId,
+            metadata: minerals.metadata,
+            ramanSpectra: minerals.ramanSpectra,
+            structuredLocalities: minerals.structuredLocalities,
+            similarityScore: q ? sql<number>`similarity(${minerals.name}, ${q})` : sql<number>`1.0`,
+          })
+          .from(minerals);
 
     if (conditions.length > 0) {
       query.where(and(...conditions));
