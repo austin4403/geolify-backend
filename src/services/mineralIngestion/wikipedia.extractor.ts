@@ -106,7 +106,7 @@ export interface ExtractedMineral {
   cleavage: string | null;
   fracture: string | null;
   opticalProperties: string | null;
-  imaStatus: string;
+  imaStatus: "Approved" | "Grandfathered" | "Discredited" | "Questionable" | "Unclassified";
   tenacity: string | null;
   diaphaneity: string | null;
   diagnosticFeatures: string | null;
@@ -157,6 +157,15 @@ export async function extractFromWikipedia(): Promise<ExtractedMineral[]> {
 
       const imaMatch = line.match(/\((IMA[^\)]+|[0-9]{4}[^\)]*)\)/i);
       const imaCode = imaMatch ? imaMatch[1] : "Approved";
+      let imaStatus: "Approved" | "Grandfathered" | "Discredited" | "Questionable" | "Unclassified" = "Approved";
+      const lowerIma = imaCode.toLowerCase();
+      if (lowerIma.includes("grandfathered") || lowerIma.includes("(g)")) {
+        imaStatus = "Grandfathered";
+      } else if (lowerIma.includes("discredited") || lowerIma.includes("(d)")) {
+        imaStatus = "Discredited";
+      } else if (lowerIma.includes("questionable") || lowerIma.includes("(q)")) {
+        imaStatus = "Questionable";
+      }
 
       pageMinerals.push({
         name: rawName,
@@ -172,7 +181,7 @@ export async function extractFromWikipedia(): Promise<ExtractedMineral[]> {
         cleavage: null,
         fracture: null,
         opticalProperties: null,
-        imaStatus: "Approved",
+        imaStatus,
         tenacity: null,
         diaphaneity: null,
         diagnosticFeatures: formula ? `Chemical Formula / IUPAC: ${formula}` : null,

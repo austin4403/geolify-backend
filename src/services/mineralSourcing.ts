@@ -10,7 +10,7 @@
 
 import { refDb } from "../db/refDb";
 import { minerals, InsertMineral } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 interface RawCuratedMineral {
   name: string;
@@ -1042,50 +1042,74 @@ export const CURATED_MINERAL_DATASET: Omit<InsertMineral, "id" | "createdAt" | "
 }));
 
 /**
- * Upserts the curated mineral dataset into PostgreSQL
+ * Upserts the curated mineral dataset into PostgreSQL atomically in batches
  */
 export async function syncMineralDatabase(): Promise<{ addedOrUpdated: number }> {
-  let count = 0;
-  for (const item of CURATED_MINERAL_DATASET) {
-    const [existing] = await refDb
-      .select({ id: minerals.id })
-      .from(minerals)
-      .where(eq(minerals.name, item.name))
-      .limit(1);
+  const batch = CURATED_MINERAL_DATASET;
+  const BATCH_SIZE = 50;
 
-    if (existing) {
-      await refDb
-        .update(minerals)
-        .set({
-          ...item,
-          updatedAt: new Date(),
-        })
-        .where(eq(minerals.id, existing.id));
-    } else {
-      await refDb.insert(minerals).values({
-        ...item,
-        createdAt: new Date(),
+  for (let i = 0; i < batch.length; i += BATCH_SIZE) {
+    const chunk = batch.slice(i, i + BATCH_SIZE);
+
+    await refDb.insert(minerals).values(chunk).onConflictDoUpdate({
+      target: minerals.name,
+      set: {
+        formula: sql`COALESCE(excluded.formula, ${minerals.formula})`,
+        crystalSystem: sql`COALESCE(excluded.crystal_system, ${minerals.crystalSystem})`,
+        mineralClass: sql`COALESCE(excluded.mineral_class, ${minerals.mineralClass})`,
+        mohsHardnessMin: sql`COALESCE(excluded.mohs_hardness_min, ${minerals.mohsHardnessMin})`,
+        mohsHardnessMax: sql`COALESCE(excluded.mohs_hardness_max, ${minerals.mohsHardnessMax})`,
+        specificGravity: sql`COALESCE(excluded.specific_gravity, ${minerals.specificGravity})`,
+        luster: sql`COALESCE(excluded.luster, ${minerals.luster})`,
+        color: sql`COALESCE(excluded.color, ${minerals.color})`,
+        streak: sql`COALESCE(excluded.streak, ${minerals.streak})`,
+        cleavage: sql`COALESCE(excluded.cleavage, ${minerals.cleavage})`,
+        fracture: sql`COALESCE(excluded.fracture, ${minerals.fracture})`,
+        opticalProperties: sql`COALESCE(excluded.optical_properties, ${minerals.opticalProperties})`,
+        imaStatus: sql`COALESCE(excluded.ima_status, ${minerals.imaStatus})`,
+        tenacity: sql`COALESCE(excluded.tenacity, ${minerals.tenacity})`,
+        diaphaneity: sql`COALESCE(excluded.diaphaneity, ${minerals.diaphaneity})`,
+        diagnosticFeatures: sql`COALESCE(excluded.diagnostic_features, ${minerals.diagnosticFeatures})`,
+        occurrence: sql`COALESCE(excluded.occurrence, ${minerals.occurrence})`,
+        imageUrl: sql`COALESCE(excluded.image_url, ${minerals.imageUrl})`,
+        rruffId: sql`COALESCE(excluded.rruff_id, ${minerals.rruffId})`,
+        mindatId: sql`COALESCE(excluded.mindat_id, ${minerals.mindatId})`,
+
+        // ⚡ Atomic Array Union with double COALESCE
+        synonyms: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.synonyms}, ARRAY[]::text[]) || COALESCE(excluded.synonyms, ARRAY[]::text[]))))`,
+        localities: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.localities}, ARRAY[]::text[]) || COALESCE(excluded.localities, ARRAY[]::text[]))))`,
+        associatedRocks: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.associatedRocks}, ARRAY[]::text[]) || COALESCE(excluded.associated_rocks, ARRAY[]::text[]))))`,
+        industrialUses: sql`(SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(${minerals.industrialUses}, ARRAY[]::text[]) || COALESCE(excluded.industrial_uses, ARRAY[]::text[]))))`,
+
+        // 📦 JSONB Deep Payloads
+        ramanSpectra: sql`COALESCE(excluded.raman_spectra, ${minerals.ramanSpectra})`,
+        structuredLocalities: sql`COALESCE(excluded.structured_localities, ${minerals.structuredLocalities})`,
+
+        // 🏷️ Flat Metadata Non-Destructive Merge
+        metadata: sql`COALESCE(${minerals.metadata}, '{}'::jsonb) || jsonb_strip_nulls(excluded.metadata)`,
         updatedAt: new Date(),
-      });
-    }
-    count++;
+      },
+    });
   }
-  return { addedOrUpdated: count };
+
+  return { addedOrUpdated: batch.length };
 }
 
 /**
- * Starts the nightly background timer scheduled for 00:00 EAT (21:00 UTC)
+ * Starts the nightly background timer scheduled for 00:00 EAT (21:00 UTC) with idempotent day tracking
  */
 export function startNightlyMineralSyncCron() {
   const checkIntervalMs = 60 * 1000; // Check every 60 seconds
+  let lastRunDateKey = "";
 
   setInterval(() => {
     const now = new Date();
     const utcHours = now.getUTCHours();
-    const utcMinutes = now.getUTCMinutes();
+    const todayKey = now.toISOString().slice(0, 10);
 
-    // 21:00 UTC == 00:00 EAT (Kenyan Time / Midnight)
-    if (utcHours === 21 && utcMinutes === 0) {
+    // 21:00 UTC == 00:00 EAT (Kenyan Time / Midnight) - runs at most once per calendar day
+    if (utcHours === 21 && lastRunDateKey !== todayKey) {
+      lastRunDateKey = todayKey;
       console.log("🕒 [00:00 EAT Midnight Cron] Triggering Scheduled Minerals Database & Sourcing Pipeline...");
       syncMineralDatabase().then(({ addedOrUpdated }) => {
         console.log(`✅ [00:00 EAT Midnight Cron] Synced and validated ${addedOrUpdated} mineral species in database.`);

@@ -35,9 +35,66 @@ const searchQuerySchema = z.object({
   industrialUses: arrayQueryParam,
   mohsMin: z.coerce.number().min(0).max(10).optional(),
   mohsMax: z.coerce.number().min(0).max(10).optional(),
+  sortBy: z.enum(["name", "hardness_asc", "hardness_desc", "gravity", "class"]).default("name"),
   limit: z.coerce.number().int().min(1).max(100).default(50),
   offset: z.coerce.number().int().min(0).default(0),
+  page: z.coerce.number().int().min(1).default(1),
 });
+
+export interface MineralFilterParams {
+  q?: string;
+  mineralClass?: string;
+  crystalSystem?: string;
+  localities?: string[];
+  associatedRocks?: string[];
+  industrialUses?: string[];
+  mohsMin?: number;
+  mohsMax?: number;
+}
+
+/**
+ * Shared filter condition builder ensuring consistent GIN index usage across all endpoints
+ */
+export function buildMineralFilterConditions(params: MineralFilterParams): SQL[] {
+  const conditions: SQL[] = [];
+
+  // GIN Index filtering with % and ILIKE without breaking index scan plans
+  if (params.q) {
+    conditions.push(
+      sql`(${minerals.name} % ${params.q} OR ${minerals.name} ILIKE ${`%${params.q}%`} OR ${minerals.formula} ILIKE ${`%${params.q}%`} OR ${params.q} = ANY(${minerals.synonyms}))`
+    );
+  }
+
+  if (params.localities && params.localities.length > 0) {
+    conditions.push(sql`${minerals.localities} && ${params.localities}`);
+  }
+
+  if (params.associatedRocks && params.associatedRocks.length > 0) {
+    conditions.push(sql`${minerals.associatedRocks} && ${params.associatedRocks}`);
+  }
+
+  if (params.industrialUses && params.industrialUses.length > 0) {
+    conditions.push(sql`${minerals.industrialUses} && ${params.industrialUses}`);
+  }
+
+  if (params.mineralClass && params.mineralClass !== "all") {
+    conditions.push(eq(minerals.mineralClass, params.mineralClass));
+  }
+
+  if (params.crystalSystem && params.crystalSystem !== "all") {
+    conditions.push(ilike(minerals.crystalSystem, `%${params.crystalSystem}%`));
+  }
+
+  // Range overlap: mineral max hardness >= filter min, and mineral min hardness <= filter max
+  if (params.mohsMin !== undefined && !isNaN(params.mohsMin)) {
+    conditions.push(gte(minerals.mohsHardnessMax, params.mohsMin));
+  }
+  if (params.mohsMax !== undefined && !isNaN(params.mohsMax)) {
+    conditions.push(lte(minerals.mohsHardnessMin, params.mohsMax));
+  }
+
+  return conditions;
+}
 
 /**
  * GET /api/minerals/search
@@ -56,44 +113,17 @@ router.get("/search", async (req: Request, res: Response, next: NextFunction) =>
     }
 
     const { q, mineralClass, crystalSystem, localities, associatedRocks, industrialUses, mohsMin, mohsMax, limit, offset } = parsed.data;
-    const conditions: SQL[] = [];
+    const conditions = buildMineralFilterConditions({
+      q,
+      mineralClass,
+      crystalSystem,
+      localities,
+      associatedRocks,
+      industrialUses,
+      mohsMin,
+      mohsMax,
+    });
 
-    // 💡 2. Optimized GIN Index Filtering (Guarantees index scan without Seq Scan regressions)
-    if (q) {
-      conditions.push(
-        sql`(${minerals.name} % ${q} OR ${minerals.name} ILIKE ${`%${q}%`} OR ${minerals.formula} ILIKE ${`%${q}%`} OR ${q} = ANY(${minerals.synonyms}))`
-      );
-    }
-
-    if (localities && localities.length > 0) {
-      conditions.push(sql`${minerals.localities} && ${localities}`);
-    }
-
-    if (associatedRocks && associatedRocks.length > 0) {
-      conditions.push(sql`${minerals.associatedRocks} && ${associatedRocks}`);
-    }
-
-    if (industrialUses && industrialUses.length > 0) {
-      conditions.push(sql`${minerals.industrialUses} && ${industrialUses}`);
-    }
-
-    if (mineralClass && mineralClass !== "all") {
-      conditions.push(eq(minerals.mineralClass, mineralClass));
-    }
-
-    if (crystalSystem && crystalSystem !== "all") {
-      conditions.push(ilike(minerals.crystalSystem, `%${crystalSystem}%`));
-    }
-
-    // Overlap logic: mineral max hardness >= requested min, and mineral min hardness <= requested max
-    if (mohsMin !== undefined) {
-      conditions.push(gte(minerals.mohsHardnessMax, mohsMin));
-    }
-    if (mohsMax !== undefined) {
-      conditions.push(lte(minerals.mohsHardnessMin, mohsMax));
-    }
-
-    // 💡 3. Query Execution with Relevance Scoring
     const query = refDb
       .select({
         id: minerals.id,
@@ -144,7 +174,6 @@ router.get("/search", async (req: Request, res: Response, next: NextFunction) =>
       data: results,
     });
   } catch (error) {
-    // 💡 4. Centralized Error Shielding (SECURITY-REPORT Cycle 4)
     next(error);
   }
 });
@@ -155,40 +184,29 @@ router.get("/search", async (req: Request, res: Response, next: NextFunction) =>
  */
 router.get("/", async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const page = Math.max(1, parseInt(req.query.page as string, 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit as string, 10) || 20));
+    const parsed = searchQuerySchema.safeParse(req.query);
+
+    if (!parsed.success) {
+      res.status(400).json({
+        error: "Invalid query parameters",
+        details: parsed.error.flatten().fieldErrors,
+      });
+      return;
+    }
+
+    const { q, mineralClass, crystalSystem, localities, associatedRocks, industrialUses, mohsMin, mohsMax, sortBy, limit, page } = parsed.data;
     const offset = (page - 1) * limit;
 
-    const q = (req.query.q as string)?.trim();
-    const crystalSystem = (req.query.crystalSystem as string)?.trim();
-    const mineralClass = (req.query.mineralClass as string)?.trim();
-    const minHardness = parseFloat(req.query.minHardness as string);
-    const maxHardness = parseFloat(req.query.maxHardness as string);
-    const sortBy = (req.query.sortBy as string)?.trim() || "name";
-
-    const conditions: SQL[] = [];
-
-    if (q) {
-      conditions.push(
-        sql`(${minerals.name} % ${q} OR ${minerals.name} ILIKE ${`%${q}%`} OR ${minerals.formula} ILIKE ${`%${q}%`} OR ${q} = ANY(${minerals.synonyms}))`
-      );
-    }
-
-    if (crystalSystem && crystalSystem !== "all") {
-      conditions.push(ilike(minerals.crystalSystem, `%${crystalSystem}%`));
-    }
-
-    if (mineralClass && mineralClass !== "all") {
-      conditions.push(ilike(minerals.mineralClass, `%${mineralClass}%`));
-    }
-
-    if (!isNaN(minHardness)) {
-      conditions.push(gte(minerals.mohsHardnessMax, minHardness));
-    }
-
-    if (!isNaN(maxHardness)) {
-      conditions.push(lte(minerals.mohsHardnessMin, maxHardness));
-    }
+    const conditions = buildMineralFilterConditions({
+      q,
+      mineralClass,
+      crystalSystem,
+      localities,
+      associatedRocks,
+      industrialUses,
+      mohsMin,
+      mohsMax,
+    });
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

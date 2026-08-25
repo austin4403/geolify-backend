@@ -347,7 +347,9 @@ export const minerals = pgTable("minerals", {
   cleavage: text("cleavage"),                            // Cleavage quality and directions (e.g. "Perfect {001}")
   fracture: text("fracture"),                            // "Conchoidal", "Uneven", "Splintery", "Hackly"
   opticalProperties: text("optical_properties"),         // "Biaxial (+)", "Uniaxial (-)", "Isotropic"
-  imaStatus: text("ima_status").default("Approved"),     // "Approved", "Grandfathered", "Discredited", "Questionable", "Unclassified"
+  imaStatus: text("ima_status", {
+    enum: ["Approved", "Grandfathered", "Discredited", "Questionable", "Unclassified"],
+  }).default("Approved"),
   tenacity: text("tenacity"),                            // "Brittle", "Malleable", "Sectile", "Flexible", "Elastic"
   diaphaneity: text("diaphaneity"),                      // "Transparent", "Translucent", "Opaque"
   diagnosticFeatures: text("diagnostic_features"),       // Key field tests (e.g. "Effervesces in cold HCl, rhombohedral cleavage")
