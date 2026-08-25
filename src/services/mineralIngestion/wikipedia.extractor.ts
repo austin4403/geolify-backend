@@ -1,4 +1,4 @@
-import { cleanText, getMineralClassFromStrunz, StrunzCodeSchema } from "../../utils/wikitext";
+import { cleanText, extractIUPACFormula, getMineralClassFromStrunz, StrunzCodeSchema } from "../../utils/wikitext";
 import { MineralMetadata } from "../../types/minerals";
 
 export const SUBPAGES = [
@@ -150,10 +150,7 @@ export async function extractFromWikipedia(): Promise<ExtractedMineral[]> {
       const mindatIdMatch = line.match(/mindat\.org\/min-([0-9]+)\.html/i);
       const mindatId = mindatIdMatch ? parseInt(mindatIdMatch[1], 10) || null : null;
 
-      const formulaMatch =
-        line.match(/<br\s*\/?>\s*\((?:IUPAC:\s*)?([^\)]+)\)/i) ||
-        line.match(/\(IUPAC:\s*([^\)]+)\)/i);
-      const formula = formulaMatch ? cleanText(formulaMatch[1]) || null : null;
+      const formula = extractIUPACFormula(line);
 
       const imaMatch = line.match(/\((IMA[^\)]+|[0-9]{4}[^\)]*)\)/i);
       const imaCode = imaMatch ? imaMatch[1] : "Approved";

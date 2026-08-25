@@ -43,6 +43,14 @@ describe("Authentication & User Creation API (/api/auth)", () => {
   });
 
   it("POST /api/auth/register - rejects duplicate email registrations", async () => {
+    if (!createdUserId) {
+      await request(app).post("/api/auth/register").send({
+        fullName: "Dr. Paul Bett",
+        email: testEmail,
+        password: testPassword,
+      });
+    }
+
     const res = await request(app)
       .post("/api/auth/register")
       .send({
