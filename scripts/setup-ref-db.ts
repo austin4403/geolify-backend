@@ -19,9 +19,9 @@ async function setupRefDb() {
       formula TEXT,
       crystal_system TEXT,
       mineral_class TEXT,
-      mohs_hardness_min DOUBLE PRECISION,
-      mohs_hardness_max DOUBLE PRECISION,
-      specific_gravity DOUBLE PRECISION,
+      mohsHardnessMin DOUBLE PRECISION,
+      mohsHardnessMax DOUBLE PRECISION,
+      specificGravity DOUBLE PRECISION,
       luster TEXT,
       color TEXT,
       streak TEXT,
@@ -48,13 +48,48 @@ async function setupRefDb() {
     );
   `;
 
-  // 3. Ensure columns exist on existing databases
+  // 3. Ensure array columns exist and migrate legacy scalar columns
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS synonyms TEXT[] DEFAULT ARRAY[]::TEXT[];`;
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS localities TEXT[] DEFAULT ARRAY[]::TEXT[];`;
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS associated_rocks TEXT[] DEFAULT ARRAY[]::TEXT[];`;
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS industrial_uses TEXT[] DEFAULT ARRAY[]::TEXT[];`;
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS raman_spectra JSONB DEFAULT '[]'::jsonb;`;
   await refSql`ALTER TABLE minerals ADD COLUMN IF NOT EXISTS structured_localities JSONB DEFAULT '[]'::jsonb;`;
+
+  // Convert industrial_uses if it was previously scalar text
+  await refSql`
+    DO $$ 
+    BEGIN 
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'minerals' AND column_name = 'industrial_uses' AND data_type = 'text'
+      ) THEN 
+        ALTER TABLE minerals 
+          ALTER COLUMN industrial_uses TYPE text[] 
+          USING CASE 
+            WHEN industrial_uses IS NULL OR industrial_uses = '' THEN ARRAY[]::text[]
+            ELSE string_to_array(industrial_uses, ', ')
+          END;
+        ALTER TABLE minerals ALTER COLUMN industrial_uses SET DEFAULT ARRAY[]::text[];
+      END IF;
+    END $$;
+  `;
+
+  // Migrate legacy common_associated_rocks if present
+  await refSql`
+    DO $$ 
+    BEGIN 
+      IF EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'minerals' AND column_name = 'common_associated_rocks'
+      ) THEN 
+        UPDATE minerals 
+        SET associated_rocks = string_to_array(common_associated_rocks, ', ') 
+        WHERE (associated_rocks IS NULL OR cardinality(associated_rocks) = 0) AND common_associated_rocks IS NOT NULL;
+        ALTER TABLE minerals DROP COLUMN IF EXISTS common_associated_rocks;
+      END IF;
+    END $$;
+  `;
 
   // 4. Create high-speed GIN and B-Tree indexes
   await refSql`CREATE INDEX IF NOT EXISTS idx_minerals_name ON minerals (name);`;
