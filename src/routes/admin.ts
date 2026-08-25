@@ -5,6 +5,8 @@ import { z } from "zod";
 import { eq, desc } from "drizzle-orm";
 import { requireAuth } from "../middleware/auth";
 import { sweepExpiredSubscriptions } from "../services/subscriptionSweeper";
+import { PRICING_PLANS, PlanDefinition, calculatePlanPricingFromMonthlyKes, applyMasterEnterpriseRate, MASTER_ENTERPRISE_RATE_KES, TIER_RATIOS } from "./pricing";
+import { persistMasterEnterpriseRate } from "../services/systemSettings";
 
 const router = Router();
 
@@ -492,6 +494,78 @@ router.delete("/promos/:id", requireAuth, requireLeadAdmin, async (req: Request,
     });
   } catch (error: any) {
     res.status(500).json({ error: "Failed to delete promo code: " + error.message });
+  }
+});
+
+// 13. GET /api/admin/pricing-plans - List all pricing plans for admin management
+router.get("/pricing-plans", requireAuth, requireDevOrAdmin, async (_req: Request, res: Response) => {
+  res.json({
+    status: "success",
+    masterEnterpriseRateKes: MASTER_ENTERPRISE_RATE_KES,
+    tierRatios: TIER_RATIOS,
+    data: Object.values(PRICING_PLANS),
+  });
+});
+
+// 14. PUT /api/admin/pricing-plans/master-rate - Set single Enterprise rate & auto-calculate all other tiers
+router.put("/pricing-plans/master-rate", requireAuth, requireLeadAdmin, async (req: Request, res: Response) => {
+  try {
+    const { enterpriseMonthlyKes } = req.body;
+    if (enterpriseMonthlyKes === undefined || isNaN(Number(enterpriseMonthlyKes))) {
+      res.status(400).json({ error: "enterpriseMonthlyKes number is required" });
+      return;
+    }
+
+    const result = await persistMasterEnterpriseRate(Number(enterpriseMonthlyKes), req.user?.userId);
+
+    res.json({
+      status: "success",
+      message: `Master Enterprise rate set to KSh ${result.masterEnterpriseRateKes.toLocaleString()}/mo. All 4 tiers automatically recalculated, balanced, and saved to database.`,
+      data: result,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to update master enterprise rate: " + error.message });
+  }
+});
+
+// 15. PUT /api/admin/pricing-plans/:planId - Update plan prices and limits live
+router.put("/pricing-plans/:planId", requireAuth, requireLeadAdmin, async (req: Request, res: Response) => {
+  try {
+    const planId = req.params.planId as string;
+    const plan = PRICING_PLANS[planId];
+    if (!plan) {
+      res.status(404).json({ error: `Pricing plan '${planId}' not found.` });
+      return;
+    }
+
+    const { monthlyPrice, monthlyRateKes, annualPrice, name, description } = req.body;
+    
+    // Auto-calculate full rate card if single monthly KES is provided
+    if (monthlyRateKes !== undefined || (monthlyPrice && monthlyPrice.KES !== undefined && monthlyPrice.USD === undefined && !annualPrice)) {
+      const targetKes = monthlyRateKes !== undefined ? Number(monthlyRateKes) : Number(monthlyPrice.KES);
+      const computed = calculatePlanPricingFromMonthlyKes(targetKes);
+      plan.monthlyPrice = computed.monthlyPrice;
+      plan.annualPrice = computed.annualPrice;
+    } else {
+      if (monthlyPrice) {
+        if (monthlyPrice.USD !== undefined) plan.monthlyPrice.USD = Number(monthlyPrice.USD);
+        if (monthlyPrice.KES !== undefined) plan.monthlyPrice.KES = Number(monthlyPrice.KES);
+      }
+      if (annualPrice) {
+        if (annualPrice.USD !== undefined) plan.annualPrice.USD = Number(annualPrice.USD);
+        if (annualPrice.KES !== undefined) plan.annualPrice.KES = Number(annualPrice.KES);
+      }
+    }
+    if (name) plan.name = String(name);
+    if (description) plan.description = String(description);
+
+    res.json({
+      status: "success",
+      message: `Plan '${plan.name}' pricing updated and algorithmically balanced successfully.`,
+      data: plan,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: "Failed to update pricing plan: " + error.message });
   }
 });
 

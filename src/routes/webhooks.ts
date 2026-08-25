@@ -3,6 +3,7 @@ import { db } from "../db";
 import { userProfiles, paymentTransactions } from "../db/schema";
 import { eq } from "drizzle-orm";
 import { stripe } from "../services/stripe";
+import { verifyPaystackSignature } from "../services/paystack";
 
 const router = Router();
 
@@ -196,10 +197,73 @@ router.post("/mpesa", async (req: Request, res: Response) => {
       console.warn("[M-Pesa Webhook] Database update warning (handled):", dbErr.message);
     }
 
-    // Safaricom expects standard acknowledgment format
     res.json({ ResultCode: 0, ResultDesc: "Accepted" });
   } catch (error: any) {
     res.status(200).json({ ResultCode: 0, ResultDesc: "Accepted with warnings" });
+  }
+});
+
+// 3. POST /api/webhooks/paystack - Paystack Global Cards & Mobile Money Callback Listener
+router.post("/paystack", async (req: Request, res: Response) => {
+  try {
+    const signature = req.headers["x-paystack-signature"] as string;
+    const body = req.body;
+
+    // Verify HMAC SHA512 signature in production
+    const isSignatureValid = verifyPaystackSignature(JSON.stringify(body), signature);
+    if (!isSignatureValid) {
+      res.status(400).send("Invalid Paystack webhook signature");
+      return;
+    }
+
+    const event = body?.event;
+    const data = body?.data;
+
+    if (event === "charge.success" && data) {
+      const reference = data.reference;
+      const userId = data.metadata?.userId;
+      const planId = data.metadata?.planId || "pro";
+      const billingCycle = data.metadata?.billingCycle || "monthly";
+      const customerCode = data.customer?.customer_code || data.customer?.email;
+
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + (billingCycle === "annual" ? 365 : 30));
+
+      if (userId) {
+        try {
+          // 1. Update user profile subscription
+          await db
+            .update(userProfiles)
+            .set({
+              subscriptionTier: planId,
+              subscriptionStatus: "active",
+              subscriptionExpiresAt: expiresAt,
+              paymentProvider: "paystack",
+              paymentCustomerId: customerCode || undefined,
+              updatedAt: new Date(),
+            })
+            .where(eq(userProfiles.userId, userId));
+
+          // 2. Mark transaction completed
+          if (reference) {
+            await db
+              .update(paymentTransactions)
+              .set({
+                status: "completed",
+                metadata: { paystackData: data },
+                updatedAt: new Date(),
+              })
+              .where(eq(paymentTransactions.transactionRef, reference));
+          }
+        } catch (dbErr: any) {
+          console.warn("[Paystack Webhook] Database update warning (handled):", dbErr.message);
+        }
+      }
+    }
+
+    res.sendStatus(200);
+  } catch (error: any) {
+    res.status(200).send("Paystack webhook received with warnings");
   }
 });
 

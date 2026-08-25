@@ -3,6 +3,7 @@ import request from "supertest";
 import app from "../../src/index";
 import { sanitizeMpesaPhone, initiateMpesaStkPush } from "../../src/services/mpesa";
 import { createStripeCheckoutSession } from "../../src/services/stripe";
+import { PRICING_PLANS } from "../../src/routes/pricing";
 
 describe("Payment Services & Checkout Integration Tests", () => {
   describe("M-Pesa Phone Number Sanitization", () => {
@@ -32,11 +33,15 @@ describe("Payment Services & Checkout Integration Tests", () => {
         phoneNumber: "0712345678",
         planId: "pro",
         billingCycle: "monthly",
-        discountPercent: 40, // Base KES 3,200 -> KES 1,920
+        discountPercent: 40,
       });
 
-      expect(result.amount).toBe(1920);
-      expect(result.discountAmount).toBe(1280);
+      const basePrice = PRICING_PLANS.pro.monthlyPrice.KES;
+      const expectedDiscount = Number(((basePrice * 40) / 100).toFixed(2));
+      const expectedAmount = Math.max(1, Math.round(basePrice - expectedDiscount));
+
+      expect(result.amount).toBe(expectedAmount);
+      expect(result.discountAmount).toBe(expectedDiscount);
       expect(result.phoneNumber).toBe("254712345678");
       expect(result.responseCode).toBe("0");
     });
@@ -47,11 +52,15 @@ describe("Payment Services & Checkout Integration Tests", () => {
         phoneNumber: "0722000000",
         planId: "pro",
         billingCycle: "monthly",
-        discountPercent: 70, // Base KES 3,200 -> KES 960
+        discountPercent: 70,
       });
 
-      expect(result.amount).toBe(960);
-      expect(result.discountAmount).toBe(2240);
+      const basePrice = PRICING_PLANS.pro.monthlyPrice.KES;
+      const expectedDiscount = Number(((basePrice * 70) / 100).toFixed(2));
+      const expectedAmount = Math.max(1, Math.round(basePrice - expectedDiscount));
+
+      expect(result.amount).toBe(expectedAmount);
+      expect(result.discountAmount).toBe(expectedDiscount);
     });
   });
 
@@ -62,13 +71,17 @@ describe("Payment Services & Checkout Integration Tests", () => {
         userEmail: "beta.tester@gmail.com",
         planId: "pro",
         billingCycle: "monthly",
-        discountPercent: 40, // Base $25 -> $15
+        discountPercent: 40,
         successUrl: "http://localhost:3000/dashboard",
         cancelUrl: "http://localhost:3000/pricing",
       });
 
-      expect(result.amount).toBe(15);
-      expect(result.discountAmount).toBe(10);
+      const basePrice = PRICING_PLANS.pro.monthlyPrice.USD;
+      const expectedDiscount = Number(((basePrice * 40) / 100).toFixed(2));
+      const expectedAmount = Number(Math.max(0, basePrice - expectedDiscount).toFixed(2));
+
+      expect(result.amount).toBe(expectedAmount);
+      expect(result.discountAmount).toBe(expectedDiscount);
       expect(result.sessionId).toBeDefined();
       expect(result.url).toContain("mock=true");
     });

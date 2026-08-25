@@ -24,6 +24,7 @@ import elevationRouter from "./routes/elevation";
 import { startSubscriptionSweeper } from "./services/subscriptionSweeper";
 import { startNightlyTilePrewarmCron } from "./services/tilePrewarm";
 import { startNightlyMineralSyncCron } from "./services/mineralSourcing";
+import { initSystemSettings } from "./services/systemSettings";
 import { securityHeaders, corsMiddleware, apiLimiter } from "./middleware/security";
 import { authenticateUser } from "./middleware/auth";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler";
@@ -109,6 +110,9 @@ if (process.env.NODE_ENV !== "test") {
     console.log(`🚀 GeoQuerry server running on http://localhost:${PORT}`);
     console.log(`🩺 Health check available at http://localhost:${PORT}/api/health`);
     console.log(`📑 Swagger Documentation available at http://localhost:${PORT}/api/docs`);
+
+    // Initialize persistent master pricing rates from PostgreSQL
+    initSystemSettings();
 
     // Start background subscription expiry sweeper (runs every 1 hour)
     startSubscriptionSweeper(60 * 60 * 1000);

@@ -1,5 +1,6 @@
 import { pgTable, text, serial, timestamp, doublePrecision, jsonb, integer, boolean, uuid } from "drizzle-orm/pg-core";
 import { relations } from "drizzle-orm";
+import type { MineralMetadata } from "../types/minerals";
 
 // 0. User Profiles & Onboarding (Linked to Neon Auth / OIDC)
 export const userProfiles = pgTable("user_profiles", {
@@ -356,10 +357,28 @@ export const minerals = pgTable("minerals", {
   imageUrl: text("image_url"),                           // Specimen image URL
   rruffId: text("rruff_id"),                             // Reference ID in RRUFF project
   mindatId: integer("mindat_id"),                        // Reference ID in Mindat database
-  metadata: jsonb("metadata").$type<Record<string, any>>().default({}),
+  metadata: jsonb("metadata").$type<MineralMetadata>().default({
+    strunzClassification: null,
+    imaCode: "Unknown",
+    isCurated: false,
+    priority: 0,
+    source: "Unknown",
+  }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 export type Mineral = typeof minerals.$inferSelect;
 export type InsertMineral = typeof minerals.$inferInsert;
+
+// 13. System Settings & Configuration (e.g. Master Pricing Rates)
+export const systemSettings = pgTable("system_settings", {
+  key: text("key").primaryKey(), // e.g. "master_enterprise_rate_kes"
+  value: text("value").notNull(), // e.g. "2000"
+  updatedBy: text("updated_by"), // userId of admin who last updated
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type SystemSetting = typeof systemSettings.$inferSelect;
+export type InsertSystemSetting = typeof systemSettings.$inferInsert;
+
